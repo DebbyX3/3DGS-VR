@@ -27,13 +27,11 @@ of an image is defined in a way that the X axis points to the right, the Y axis
 to the bottom, and the Z axis to the front as seen from the image.
 '''
 
-#images_info = f.read()
-
 count = 0
 images_info = []
 cameras_coords = []
 
-with open('colmap_output/sparse/images.txt', 'r') as f:
+with open('../colmap_reconstructions/colmap_output_simple_radial/sparse/images.txt', 'r') as f:
     for line in f:    
         # Ignore comments
         if not line.startswith("#"):
@@ -63,8 +61,7 @@ with open('colmap_output/sparse/images.txt', 'r') as f:
                 rotation_transpose = rotation_matrix.transpose()
                 print("Rotation matrix transposed:\n", rotation_transpose)
 
-                # INVERT R_TRANSPOSED (-R^t)
-                #rotation_trans_inv = inv(rotation_transpose)
+                # MULTIPLY R_TRANSPOSED BY * (-1) (-R^t)
                 rotation_trans_inv = (-1) * rotation_transpose
                 print("Rotation matrix transposed and * (-1):\n", rotation_trans_inv)
 
@@ -90,7 +87,7 @@ points_info = []
 points_position = []
 points_color = []
 
-with open('colmap_output/sparse/points3D.txt', 'r') as f:
+with open('../colmap_reconstructions/colmap_output_simple_radial/sparse/points3D.txt', 'r') as f:
     for line in f:
         # Ignore comments
         if not line.startswith("#"):
@@ -112,8 +109,8 @@ colmap_points3d_point_cloud.colors = o3d.utility.Vector3dVector((np.array(points
 
 # ***************** LOAD POINT CLOUD FILE (.PLY)
 
-# Load colmap point cloud
-pcd = o3d.io.read_point_cloud("colmap_output/dense/fused.ply") 
+# Load colmap point cloud   
+pcd = o3d.io.read_point_cloud("../colmap_reconstructions/colmap_output_simple_radial/dense/fused.ply") 
 
 # Create new point cloud, add camera centers
 cameras_point_cloud = o3d.geometry.PointCloud()
@@ -126,4 +123,4 @@ cameras_point_cloud.paint_uniform_color([1, 0, 0])
 #o3d.visualization.draw_geometries([cameras_point_cloud])
 
 # View both camera and colmap points
-o3d.visualization.draw([pcd, cameras_point_cloud])
+o3d.visualization.draw([colmap_points3d_point_cloud, cameras_point_cloud])

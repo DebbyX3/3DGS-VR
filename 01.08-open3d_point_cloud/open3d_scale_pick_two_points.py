@@ -29,7 +29,7 @@ if __name__ == "__main__":
     ply_point_cloud = o3d.data.PLYPointCloud()
     pcd = o3d.io.read_point_cloud(ply_point_cloud.path)
 
-    pcd = o3d.io.read_point_cloud('meshed-delaunay.ply')
+    pcd = o3d.io.read_point_cloud('fused.ply')
 
     # ----------- PICK EXACTLY TWO POINTS IN THE POINT CLOUD AND INPUT THEIR REAL KNOWN DISTANCE (IN METERS)  ------------
 
@@ -153,7 +153,7 @@ if __name__ == "__main__":
         cropped_point_cloud.colors.append(scaled_point_cloud.colors[idx])
     
     # Visualize
-    o3d.visualization.draw_geometries([cropped_point_cloud])
+    o3d.visualization.draw_geometries([cropped_point_cloud, sphere_in_center])
 
     ''' 
     # Color selected points in red
