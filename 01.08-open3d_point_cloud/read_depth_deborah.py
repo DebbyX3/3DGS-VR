@@ -1,15 +1,17 @@
 import numpy as np
 import pylab as plt
+import matplotlib
+matplotlib.use('TkAgg')
 
 #--------------------- READ DEPTH MAP
 
 # --- read depth_anything depth map
-map = np.load("depth_maps_metric_depthAny/mie_ext/20240802_150747_raw_depth_meter.npy") 
+#map = np.load("depth_maps_metric_depthAny/mie_ext/20240802_150747_raw_depth_meter.npy") 
 #map = np.load("depth_maps_metric_depthAny/mie_int/20240731_174758_raw_depth_meter.npy") 
 #map = np.load("depth_maps_metric_depthAny/3DGS_truck/000001_raw_depth_meter.npy")
 
 # --- read colmap depth map
-#map = np.load("colmap_output/dense/stereo/depth_maps_npy_colmap/depth_map000001.png.geometric.bin.npy")
+map = np.load("../colmap_reconstructions/colmap_output_simple_radial/dense/stereo/depth_maps_npy_colmap/depth_map000001.png.geometric.bin.npy")
 
 #--------------------- PRINT IMAGE INFORMATION
 print("------ Image information")
@@ -53,8 +55,8 @@ plt.show()
 #--------------------- MEAN OF VALUES OF BOTH DEPTH MAPS
 
 
-mapMetric = np.load("depth_maps_metric_depthAny/3DGS_truck/000001_raw_depth_meter.npy")
-mapColmap = np.load("colmap_output/dense/stereo/depth_maps_npy_colmap/depth_map000001.png.geometric.bin.npy")
+mapMetric = np.load("../depth_maps_metric_depthAny/3DGS_truck/000001_raw_depth_meter.npy")
+mapColmap = np.load("../colmap_reconstructions/colmap_output_simple_radial/dense/stereo/depth_maps_npy_colmap/depth_map000001.png.geometric.bin.npy")
 
 averageMetric = mapMetric[np.nonzero(mapMetric)].mean()
 averageColmap = mapColmap[np.nonzero(mapColmap)].mean()
