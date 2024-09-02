@@ -34,6 +34,8 @@ import argparse
 import numpy as np
 import os
 import struct
+import matplotlib
+matplotlib.use('TkAgg')
 
 
 def read_array(path):
@@ -137,6 +139,11 @@ def main():
     )
     depth_map[depth_map < min_depth] = min_depth
     depth_map[depth_map > max_depth] = max_depth
+    
+    
+    # Save depth map in np
+    np.save("depth_map_" + os.path.basename(args.depth_map), depth_map)
+    #groda = np.load("depth_maps_npy/depth_map000001.png.geometric.bin.npy")
 
     import pylab as plt
 
@@ -145,19 +152,16 @@ def main():
     plt.imshow(depth_map)
     plt.title("depth map")
 
-    # Save depth map in np
-    np.save("depth_maps_npy/depth_map" + os.path.basename(args.depth_map), depth_map)
-    groda = np.load("depth_maps_npy/depth_map000001.png.geometric.bin.npy")
-
+    ''' 
     print("max: ", np.max(groda))
     print("min: ", np.min(groda[np.nonzero(groda)]))
-    '''
+    
     # Visualize the normal map.
     plt.figure()
     plt.imshow(normal_map)
-    plt.title("normal map")'''
+    plt.title("normal map")
 
-    plt.show()
+    plt.show()'''
 
 
 if __name__ == "__main__":
