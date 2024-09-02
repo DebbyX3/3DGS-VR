@@ -2,3 +2,4 @@ colmap_reconstructions/water_bottle_gui_pinhole_1camera/fused.ply.vis
 colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/points3D.txt
 colmap_reconstructions/water_bottle_gui_pinhole_1camera/db.db
 colmap_reconstructions/water_bottle_gui_pinhole_1camera/fused.ply
+colmap_reconstructions/water_bottle_gui_pinhole_1camera/stereo/normal_maps
