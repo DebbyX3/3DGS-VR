@@ -116,51 +116,16 @@ if 'k1' in locals():
 if 'k2' in locals():
     print(" k2: ", k2)
 
-#intrinsic = o3d.camera.PinholeCameraIntrinsic(width, height, fx, fy, cx, cy)
+#intrinsic = o3d.camera.PinholeCameraIntrinsic(width, height, fx, fy, cx, cy) #alternatively
 intrinsic = o3d.camera.PinholeCameraIntrinsic(width, height, intrinsic_matrix)
-
-
-# ************************** EXTRACT EXTRINSICS **************************
-
-# Extrinsics matrix:
-# [R 3x3, T 3x1]
-# [0 1x3, 1    ] 4x4
-#
-# Which means:
-# [ R11 R12 R13 T1 ]
-# [ R21 R22 R23 T2 ]
-# [ R31 R32 R33 T3 ]
-# [ 0   0   0   1  ]
-#
-# Where R is the 3x3 rotation matrix and T is the translation vector
-# The matrix denote the coordinate system transformations from 3D world coordinates to 3D camera coordinates
-
-# ***************** READ IMAGES.TXT COLMAP FILE 
-
-# Image list with two lines of data per image:
-#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
-#   POINTS2D[] as (X, Y, POINT3D_ID)
-
-'''
-The reconstructed pose of an image is specified as the projection from world to 
-the camera coordinate system of an image using a quaternion (QW, QX, QY, QZ) and 
-a translation vector (TX, TY, TZ). The quaternion is defined using the Hamilton 
-convention, which is, for example, also used by the Eigen library. 
-
-The coordinates of the projection/camera center are given by -R^t * T, where 
-R^t is the inverse/transpose of the 3x3 rotation matrix composed from the 
-quaternion and T is the translation vector. 
-
-The local camera coordinate system 
-of an image is defined in a way that the X axis points to the right, the Y axis 
-to the bottom, and the Z axis to the front as seen from the image.
-'''
 
 count = 0
 cameras_info = []
 cameras_extrinsics = []
 
-# Create the point cloud
+imgs_folder = "../colmap_reconstructions/water_bottle_gui_pinhole_1camera/images"
+depth_map_folder = '../colmap_reconstructions/water_bottle_gui_pinhole_1camera/stereo/depth_maps'
+
 point_cloud = o3d.geometry.PointCloud()
 
 with open('../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/images.txt', 'r') as f:
@@ -168,7 +133,6 @@ with open('../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/ima
         # Ignore comments
         if not line.startswith("#"):
             count+=1
-            print(count)
 
             if count % 2 != 0: # Read every other line (skip the second line for every image)
                 single_camera_info = line.split() # split every field in line
@@ -181,63 +145,36 @@ with open('../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/ima
                 # CREATE ROTATION MATRIX 'R' FROM QUATERNIONS
                 quaternions = np.array([single_camera_info[1], single_camera_info[2], single_camera_info[3], single_camera_info[4]]) # numpy array
                 rotation_matrix = o3d.geometry.get_rotation_matrix_from_quaternion(quaternions)
-                #print("Rotation matrix from quaternions:\n", rotation_matrix)
 
                 # CREATE TRANSLATION VECTOR T
                 translation = np.array([single_camera_info[5], single_camera_info[6], single_camera_info[7]], dtype = float)
-                #print("Translation vector:\n", translation)
 
                 # CREATE EXTRINSICS MATRIX                
                 extrinsics_matrix = np.vstack([np.hstack([rotation_matrix, translation.reshape(3, 1)]), 
                                                 np.array([0, 0, 0, 1])])
-                #print("Extrinsics matrix:\n", extrinsics_matrix)
 
                 cameras_extrinsics.append(extrinsics_matrix)
                 
                 # Take the image file name
                 img_filename = single_camera_info[9]
 
-                # Search the image file name in the depth map directory
-                depth_map_folder = '../colmap_reconstructions/water_bottle_gui_pinhole_1camera/stereo/depth_maps'
-                depth_map_filename = img_filename + '.geometric.bin'
+                # Read the depth map
+                depth_map_filename = img_filename + '.geometric.bin' # get the filename of the depth map
                 depth_map_path = os.path.join(depth_map_folder, depth_map_filename)
+                depth = o3d.geometry.Image(read_array(depth_map_path)) 
 
-                # Load the depth map image
-                #depth_image = Image.open("path_to_depth_image.png")
-                #depth_array = np.array(depth_image)
-
-                depth_map = read_array(depth_map_path)
-                #depth_map = np.load("../colmap_reconstructions/colmap_output_simple_radial/dense/stereo/depth_maps_npy_colmap/depth_map_000001.png.geometric.bin.npy")
-
-                depth_map_o3d = o3d.geometry.Image(depth_map) 
-
-                # ***** COLORS
-
-                # Load the RGB image
-                rgb_image = o3d.io.read_image("../colmap_reconstructions/water_bottle_gui_pinhole_1camera/images/" + img_filename)
-
-                # Extract the RGB values of every pixel
-                rgb_values = np.asarray(rgb_image).reshape(-1, 3)
-
-                # ***** CREATE POINT CLOUD
-
-                frog = (np.array(rgb_values) / 255.0)
+                # Read the image
+                img_path = os.path.join(imgs_folder, img_filename)
+                img = o3d.io.read_image(img_path)
+                rgb = o3d.geometry.Image(img)
                 
-                # Create the point cloud from the depth map
-                single_point_cloud = o3d.geometry.PointCloud.create_from_depth_image(depth_map_o3d, intrinsic, extrinsic = extrinsics_matrix)
-                
-                single_point_cloud.colors = o3d.utility.Vector3dVector(frog)
-                print(np.array(single_point_cloud.points).shape)
-                print(np.array(single_point_cloud.colors).shape)
+                # Create the RGBD image
+                rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(rgb, depth, depth_trunc=1000.0, convert_rgb_to_intensity=False)
 
-                single_point_cloud.colors = o3d.utility.Vector3dVector(frog)
+                # Create the point cloud
+                point_cloud += o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic, extrinsics_matrix)
 
-                point_cloud += single_point_cloud
-
-            if (count == 30):
+            if count == 2:
                 break
 
-print(len(point_cloud.points))
-
-# Visualize the point cloud
 o3d.visualization.draw_geometries([point_cloud])
