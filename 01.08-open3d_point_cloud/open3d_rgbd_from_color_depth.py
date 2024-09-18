@@ -174,7 +174,7 @@ with open('../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/ima
                 # Create the point cloud
                 point_cloud += o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic, extrinsics_matrix)
 
-            if count == 2:
+            if count == 8:
                 break
 
 o3d.visualization.draw_geometries([point_cloud])
