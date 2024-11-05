@@ -5,6 +5,7 @@ import os
 import matplotlib
 matplotlib.use('TkAgg')
 import pylab as plt
+from typing import Union
 
 def read_array(path):
     with open(path, "rb") as fid:
@@ -56,6 +57,83 @@ def extrinsics_from_quaternion_and_translation(qw, qx, qy, qz, tx, ty, tz):
 
     return extrinsic
 
+'''
+The following function takes an Open3D PointCloud, equation of a plane (A, B, C, and D) 
+and the optical center and returns a planar Open3D PointCloud Geometry.
+'''
+def get_flattened_pcds2(source,A,B,C,D,x0,y0,z0):
+    x1 = np.asarray(source.points)[:,0]
+    y1 = np.asarray(source.points)[:,1]
+    z1 = np.asarray(source.points)[:,2]
+    x0 = x0 * np.ones(x1.size)
+    y0 = y0 * np.ones(y1.size)
+    z0 = z0 * np.ones(z1.size)
+    r = np.power(np.square(x1-x0)+np.square(y1-y0)+np.square(z1-z0),0.5)
+    a = (x1-x0)/r
+    b = (y1-y0)/r
+    c = (z1-z0)/r
+    t = -1 * (A * np.asarray(source.points)[:,0] + B * np.asarray(source.points)[:,1] + C * np.asarray(source.points)[:,2] + D)
+    t = t / (a*A+b*B+c*C)
+    np.asarray(source.points)[:,0] = x1 + a * t
+    np.asarray(source.points)[:,1] = y1 + b * t
+    np.asarray(source.points)[:,2] = z1 + c * t
+    return source
+
+def create_lines(mesh_vertices: np.ndarray, edges: o3d.utility.Vector2iVector, color: list = None) -> o3d.geometry.LineSet:
+    """ Create a LineSet from vertices and edges of a mesh.
+    :param mesh_vertices: vertices of the mesh
+    :param edges: edges of the mesh, saved in a numpy array of shape (n, 2). Ex: [[0,5], [5,8], [8, 10]]
+    :param color: color to apply to the edges, ex: GREEN, RED, ... (optional)
+    :return: Lineset """
+
+    print("mesh_vertices: ", mesh_vertices)
+
+    # LineSet creation
+    lines = o3d.geometry.LineSet(
+        points=o3d.utility.Vector3dVector(mesh_vertices),
+        lines=o3d.utility.Vector2iVector(np.array(edges)),
+    )
+
+    # Apply colors if exists, otherwise apply BLACK
+    if color is not None:
+        lines_color = [color] * len(edges)
+    else:
+        lines_color = [BLACK] * len(edges)
+    lines.colors = o3d.utility.Vector3dVector(lines_color)
+
+    return lines
+
+def create_aabb(object_3d: Union[o3d.geometry.PointCloud, o3d.geometry.TriangleMesh]) -> o3d.geometry.LineSet:
+    """ Given a point cloud or a mesh this function computes the aabb of the 3d object
+    :param object_3d: point cloud or mesh
+    :return: aabb of the point cloud """
+
+    vertices = np.array(object_3d.points)
+
+    max_x = np.max(vertices[:, 0])  # max on x-axis
+    max_y = np.max(vertices[:, 1])  # max on y-axis
+    max_z = np.max(vertices[:, 2])  # max on z-axis
+
+    min_x = np.min(vertices[:, 0])  # min on x-axis
+    min_y = np.min(vertices[:, 1])  # min on y-axis
+    min_z = np.min(vertices[:, 2])  # min on z-axis
+
+    box_vertices = np.array([[max_x, max_y, min_z],
+                             [max_x, max_y, max_z],
+                             [min_x, max_y, max_z],
+                             [min_x, max_y, min_z],
+                             [max_x, min_y, min_z],
+                             [max_x, min_y, max_z],
+                             [min_x, min_y, max_z],
+                             [min_x, min_y, min_z]])
+
+    box_edges = o3d.utility.Vector2iVector([[0, 1], [1, 2], [2, 3], [3, 0],
+                                            [4, 5], [5, 6], [6, 7], [7, 4],
+                                            [0, 4], [1, 5], [2, 6], [3, 7]])
+
+    aabb = create_lines(box_vertices, box_edges, [1,0,0])
+
+    return aabb
 
 # ************************** EXTRACT INTRINSICS FROM CAMERA.TXT FILE **************************
 # Intrinsics matrix:
@@ -238,6 +316,49 @@ with open('../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/ima
 
                     # Create the point cloud
                     #point_cloud += o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic, extrinsics_matrix)
+
+                    current_point_cloud = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic, extrinsics_matrix)
+
+                    '''
+                    The following function takes an Open3D PointCloud, equation of a plane (A, B, C, and D) 
+                    and the optical center and returns a planar Open3D PointCloud Geometry.
+                    z = 0
+                    '''
+                    flat = get_flattened_pcds2(current_point_cloud, 0, 0, 1, 0, 0, 0, -4)
+                    flat.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]) #flip it
+
+                    x_max = np.max(np.asarray(flat.points)[:,0])
+                    y_max = np.max(np.asarray(flat.points)[:,1])
+                    z_max = np.max(np.asarray(flat.points)[:,2])
+
+                    x_min = np.min(np.asarray(flat.points)[:,0])
+                    y_min = np.min(np.asarray(flat.points)[:,1])
+                    z_min = np.min(np.asarray(flat.points)[:,2])
+
+                    print("max_point: ", x_max, y_max, z_max)
+                    print("min_point: ", x_min, y_min, z_min)
+
+                    max_point = np.array([x_max, y_max, z_max])
+                    min_point = np.array([x_min, y_min, z_min])
+
+                    groda1 = np.array([x_max, y_min, z_max])
+                    groda2 = np.array([x_min, y_max, z_max])
+
+                    print("max_point: ", max_point)
+                    print("min_point: ", min_point)                    
+
+                    for i in range(0, 3):
+                        print(flat.points[i])
+
+                    groda = flat.get_axis_aligned_bounding_box()
+                
+                    #lines = create_lines(np.array([[1,1,0],[1,-1,0],[-1,1,0],[-1,-1,0]]), np.array([[0,1],[1,3],[3,2],[2,0]]), [1,0,0])
+                    #lines = create_lines(np.array([first, [1,-1,0],[-1,1,0],[-1,-1,0]]), np.array([[0,1],[1,3],[3,2],[2,0]]), [1,0,0])
+                    #lines = create_lines(np.array([groda1, max_point, groda2, min_point]), np.array([[0,1],[1,2],[2,3],[3,0]]), [1,0,0])
+
+                    lines = create_aabb(flat)
+                    
+                    o3d.visualization.draw_geometries([flat, lines, groda])
 
             if count == 2:
                 break
