@@ -68,6 +68,7 @@ def get_flattened_pcds2(source,A,B,C,D,x0,y0,z0):
     x0 = x0 * np.ones(x1.size)
     y0 = y0 * np.ones(y1.size)
     z0 = z0 * np.ones(z1.size)
+    print("x0", x0)
     r = np.power(np.square(x1-x0)+np.square(y1-y0)+np.square(z1-z0),0.5)
     a = (x1-x0)/r
     b = (y1-y0)/r
@@ -78,6 +79,46 @@ def get_flattened_pcds2(source,A,B,C,D,x0,y0,z0):
     np.asarray(source.points)[:,1] = y1 + b * t
     np.asarray(source.points)[:,2] = z1 + c * t
     return source
+
+'''
+equation of a sphere:
+(x-h)^2 + (y-k)^2 + (z-l)^2 = r^2
+
+The following python method takes an Open3D PointCloud geometry, 
+and the radius (r1) and center (x0,y0,z0) of the sphere to project on.
+'''
+def get_spherical_pcd(source,x0,y0,z0,r1):
+    x2 = np.asarray(source.points)[:,0]
+    y2 = np.asarray(source.points)[:,1]
+    z2 = np.asarray(source.points)[:,2]
+    x0 = x0 * np.ones(x2.size)
+    y0 = y0 * np.ones(y2.size)
+    z0 = z0 * np.ones(z2.size)
+    r1 = r1 * np.ones(x2.size)
+    r2 = np.power(np.square(x2-x0)+np.square(y2-y0)+np.square(z2-z0),0.5)
+    np.asarray(source.points)[:,0] = x0 + (r1/r2) * (x2-x0)
+    np.asarray(source.points)[:,1] = y0 + (r1/r2) * (y2-y0)
+    np.asarray(source.points)[:,2] = z0 + (r1/r2) * (z2-z0)
+    return source
+
+def pick_points(pcd):
+
+    print("")
+    print("1) Please pick two points using [shift + left click]")
+    print("   Press [shift + right click] to undo point picking")    
+    print("   Press [shift + +/-] to increase/decrease picked point size")
+    print("2) After picking points, press q to close the window")
+    print("")
+
+    vis = o3d.visualization.VisualizerWithEditing()
+    vis.create_window()
+    vis.add_geometry(pcd)
+    vis.run()  # user picks points
+    vis.destroy_window()
+
+    print("")
+
+    return vis.get_picked_points()
 
 def create_lines(mesh_vertices: np.ndarray, edges: o3d.utility.Vector2iVector, color: list = None) -> o3d.geometry.LineSet:
     """ Create a LineSet from vertices and edges of a mesh.
@@ -335,20 +376,11 @@ with open('../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/ima
                     y_min = np.min(np.asarray(flat.points)[:,1])
                     z_min = np.min(np.asarray(flat.points)[:,2])
 
-                    print("max_point: ", x_max, y_max, z_max)
-                    print("min_point: ", x_min, y_min, z_min)
-
                     max_point = np.array([x_max, y_max, z_max])
                     min_point = np.array([x_min, y_min, z_min])
 
                     groda1 = np.array([x_max, y_min, z_max])
-                    groda2 = np.array([x_min, y_max, z_max])
-
-                    print("max_point: ", max_point)
-                    print("min_point: ", min_point)                    
-
-                    for i in range(0, 3):
-                        print(flat.points[i])
+                    groda2 = np.array([x_min, y_max, z_max])  
 
                     groda = flat.get_axis_aligned_bounding_box()
                 
@@ -358,7 +390,79 @@ with open('../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/ima
 
                     lines = create_aabb(flat)
                     
-                    o3d.visualization.draw_geometries([flat, lines, groda])
+                    '''
+                    vis = o3d.visualization.Visualizer()
+                    
+                    vis.create_window()
+                    vis.add_geometry(flat)
+                    vis.poll_events()
+                    vis.update_renderer()
+                    vis.capture_screen_image("groda.jpg")
+                    '''
+
+                    #o3d.visualization.draw_geometries([flat, lines, groda])
+                    
+                    # **** SPHERIC PROJECTION
+                    current_point_cloud = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic, extrinsics_matrix)
+
+                    # PICK THE CENTER OF THE POINT CLOUD
+                    data = []
+
+                    while len(data) != 1:
+                        data = pick_points(current_point_cloud)
+                        if len(data) != 1:
+                            print("ERROR: please, pick exactly one center points!")
+                            input("Press Enter to retry...")
+
+                    # Extract coordinates of the points
+                    center_point_coords = current_point_cloud.select_by_index(data)
+
+                    # Print points coordinates
+                    print("Selected points coordinates: \n", np.asarray(center_point_coords.points))
+
+                    # Convert to numpy array
+                    center_coord = np.asarray(center_point_coords.points)[0]
+                    print(center_coord[0], center_coord[1], center_coord[2])
+
+                    # Remove points too close to the center
+                    # ask the user a radius to remove the points in meters
+                    sphere_radius = None
+
+                    while not isinstance(sphere_radius, (int, float)):
+                        try:
+                            print("Input the radius of the sphere (in meters) that would crop the scene, leaving with only the outside of the sphere.")
+                            sphere_radius = float(input("   Use a 'period' to input a decimal number (e.g. 15.4): "))
+                        except ValueError:
+                            print("")
+                            print("ERROR: please, input a valid number!")
+                            print("")
+
+                    # crop
+                    #cerca tutti i punti che sono a distanza minore di sphere_radius dal centro
+                    # quelli minori vanno eliminati
+                    distances_from_center = np.linalg.norm(np.asarray(current_point_cloud.points) - center_coord, axis=1)
+                    indexes_points_outside_sphere = np.where(distances_from_center > sphere_radius)[0]
+
+                    # Save them in a new point cloud
+                    cropped_point_cloud = o3d.geometry.PointCloud()
+
+                    for idx in indexes_points_outside_sphere:
+                        cropped_point_cloud.points.append(current_point_cloud.points[idx])
+                        cropped_point_cloud.colors.append(current_point_cloud.colors[idx])
+
+                    # Visualize
+                    #o3d.visualization.draw_geometries([cropped_point_cloud]) #2
+
+                    # Pass the new cropped point cloud and the center to the sphere function
+                    sphere = get_spherical_pcd(cropped_point_cloud, center_coord[0], center_coord[1], center_coord[2], 2)
+
+                    # add center to the point cloud
+                    sphere.points.append(center_coord)
+                    #paint it magenta
+                    sphere.colors.append(([1, 0, 1]))
+                    o3d.visualization.draw_geometries([sphere])
+
+
 
             if count == 2:
                 break
