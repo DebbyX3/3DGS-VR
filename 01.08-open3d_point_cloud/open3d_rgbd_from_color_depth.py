@@ -155,6 +155,63 @@ def createSphericalPointCloud(sourcepc, radius, xc, yc, zc):
 
     return outputpc
 
+def createEquirectangularPointCloud(sourcepc, radius, xc, yc, zc):
+
+    x = np.asarray(sourcepc.points)[:,0]
+    y = np.asarray(sourcepc.points)[:,1]
+    z = np.asarray(sourcepc.points)[:,2]
+    
+    #radius = np.sqrt(x**2 + y**2 + z**2) #tbh ce l'ho già, no?
+
+    # Convert cartesian coordinates to spherical coordinates
+    theta = np.arctan2(z, x)
+    phi = np.arcsin(y/radius)
+
+    print("theta: ", theta)
+    print("phi: ", phi)
+
+    width =  1024
+    height = 512
+    
+    u = (theta / (2 * np.pi)) * width
+    v = (1 - (phi + np.pi / 2) / np.pi) * height
+
+    # in una point cloud
+    outputpc = o3d.geometry.PointCloud()
+    outputpc.points = o3d.utility.Vector3dVector(np.column_stack((u, v, np.zeros(u.size))))
+    outputpc.colors = sourcepc.colors
+
+    # in una immagine
+    u = np.clip(u, 0, width - 1).astype(int)
+    v = np.clip(v, 0, height - 1).astype(int)
+
+    img = np.zeros((height, width, 3), dtype=np.uint8)  # Immagine RGB
+
+    # Create the RGB raster image
+    for i, (x, y) in enumerate(zip(u.astype(int), v.astype(int))):
+        if 0 <= x < width and 0 <= y < height:
+            img[y, x] = (np.asarray(sourcepc.colors)[i] * 255).astype(np.uint8)
+
+    # Visualizza l'immagine
+    plt.imshow(img)
+    plt.axis('off')
+    plt.show()
+
+    return outputpc
+
+'''
+    img = np.zeros((height, width, 3), dtype=np.uint8)
+    for x, y in zip(u.astype(int), v.astype(int)):
+        img[y, x] = [255, 255, 255]  # Colore bianco
+
+    plt.imshow(img)
+    plt.axis('off')
+    plt.show()
+'''
+
+
+    #theta = arctan2(x, y)
+    #phi = arcsin(y/r)
 
 def pick_points(pcd):
 
@@ -357,8 +414,8 @@ with open(imagesTxt_path, 'r') as f:
     for line in f:    
         # Ignore comments
         if not line.startswith("#"):
-            #count+=1
-            count += 7
+            count+=1
+            #count += 7
             print(count)
 
             if(count > 0):
@@ -474,7 +531,7 @@ with open(imagesTxt_path, 'r') as f:
                     # Add to the total point cloud
                     point_cloud += current_point_cloud
 
-            if count >= 60:
+            if count >= 100:
                 break
 
 
@@ -533,7 +590,11 @@ sphere = createSphericalPointCloud(cropped_point_cloud, 5, center_coord[0], cent
 sphere.points.append(center_coord)
 #paint it magenta
 sphere.colors.append(([1, 0, 1]))
-o3d.visualization.draw_geometries([sphere])
+#o3d.visualization.draw_geometries([sphere])
+
+equiImg = createEquirectangularPointCloud(sphere, 5, center_coord[0], center_coord[1], center_coord[2])
+print(equiImg)
+o3d.visualization.draw_geometries([equiImg])
 
 '''
 #Save pointcloud to file
