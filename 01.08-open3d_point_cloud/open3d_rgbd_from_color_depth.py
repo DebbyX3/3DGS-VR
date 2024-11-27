@@ -68,7 +68,6 @@ def get_flattened_pcds2(source,A,B,C,D,x0,y0,z0):
     x0 = x0 * np.ones(x1.size)
     y0 = y0 * np.ones(y1.size)
     z0 = z0 * np.ones(z1.size)
-    print("x0", x0)
     r = np.power(np.square(x1-x0)+np.square(y1-y0)+np.square(z1-z0),0.5)
     a = (x1-x0)/r
     b = (y1-y0)/r
@@ -87,6 +86,7 @@ equation of a sphere:
 The following python method takes an Open3D PointCloud geometry, 
 and the radius (r1) and center (x0,y0,z0) of the sphere to project on.
 '''
+'''
 def get_spherical_pcd(source,x0,y0,z0,r1):
     x2 = np.asarray(source.points)[:,0]
     y2 = np.asarray(source.points)[:,1]
@@ -100,6 +100,7 @@ def get_spherical_pcd(source,x0,y0,z0,r1):
     np.asarray(source.points)[:,1] = y0 + (r1/r2) * (y2-y0)
     np.asarray(source.points)[:,2] = z0 + (r1/r2) * (z2-z0)
     return source
+'''
 
 '''
 The following python method takes an Open3D PointCloud geometry, 
@@ -170,27 +171,47 @@ def createEquirectangularPointCloud(sourcepc, radius, xc, yc, zc):
     print("theta: ", theta)
     print("phi: ", phi)
 
-    width =  1024
-    height = 512
-    
-    u = (theta / (2 * np.pi)) * width
-    v = (1 - (phi + np.pi / 2) / np.pi) * height
+    width =  4096
+    height = 2048
+
+    uCloud = (theta / (2 * np.pi)) * width              # from -pi to pi
+    vCloud = (1 - (phi + np.pi / 2) / np.pi) * height   # from pi/2 to -pi/2
 
     # in una point cloud
     outputpc = o3d.geometry.PointCloud()
-    outputpc.points = o3d.utility.Vector3dVector(np.column_stack((u, v, np.zeros(u.size))))
+    outputpc.points = o3d.utility.Vector3dVector(np.column_stack((uCloud, vCloud, np.zeros(uCloud.size))))
     outputpc.colors = sourcepc.colors
 
-    # in una immagine
-    u = np.clip(u, 0, width - 1).astype(int)
-    v = np.clip(v, 0, height - 1).astype(int)
+    #cicla sui punti della nuvola e fai una conversione a intero per arrivare a pixel
+    #sigh non so se ho captito bene, forse meglio se normalizzo tutto da 0 a 1 e poi alla fine moltiplicare per alt e largh e castare a intero per avere i pixel
+    # per ora ignora il blending
 
-    img = np.zeros((height, width, 3), dtype=np.uint8)  # Immagine RGB
+    # convert to image coordinates normalizing to the image size
+    #normalizza u e v da 0 a 1
+    uCloudNorm = (uCloud - np.min(uCloud)) / (np.max(uCloud) - np.min(uCloud))
+    vCloudNorm = (vCloud - np.min(vCloud)) / (np.max(vCloud) - np.min(vCloud))
 
-    # Create the RGB raster image
-    for i, (x, y) in enumerate(zip(u.astype(int), v.astype(int))):
-        if 0 <= x < width and 0 <= y < height:
-            img[y, x] = (np.asarray(sourcepc.colors)[i] * 255).astype(np.uint8)
+    # Multiply each dimension for width and height
+    uCloudNorm *= width
+    vCloudNorm *= height
+
+    pointcloudnorm = o3d.geometry.PointCloud()
+    pointcloudnorm.points = o3d.utility.Vector3dVector(np.column_stack((uCloudNorm, vCloudNorm, np.zeros(uCloud.size))))
+    pointcloudnorm.colors = sourcepc.colors
+
+    # Create a new raster image
+    img = np.zeros((height, width, 3), dtype=np.uint8)
+
+    # Assign colors to the raster image
+    for i in range(len(pointcloudnorm.points)):
+        #for i in range(50):
+        (x, y, z) = np.asarray(pointcloudnorm.points[i], dtype=int)
+        #print(x, y, z)
+        img[y-1, x-1] = (np.asarray(sourcepc.colors)[i] * 255).astype(np.uint8)
+
+    '''in the pointcloudnorm point cloud, i want to multiplicate each dimension for a number 
+    (dimension 0 for width, dimension 1 for height). 
+    then, i want to take the color of that point and assign it to a new raster image'''
 
     # Visualizza l'immagine
     plt.imshow(img)
@@ -208,10 +229,6 @@ def createEquirectangularPointCloud(sourcepc, radius, xc, yc, zc):
     plt.axis('off')
     plt.show()
 '''
-
-
-    #theta = arctan2(x, y)
-    #phi = arcsin(y/r)
 
 def pick_points(pcd):
 
@@ -511,7 +528,7 @@ with open(imagesTxt_path, 'r') as f:
                     #lines = create_lines(np.array([first, [1,-1,0],[-1,1,0],[-1,-1,0]]), np.array([[0,1],[1,3],[3,2],[2,0]]), [1,0,0])
                     #lines = create_lines(np.array([groda1, max_point, groda2, min_point]), np.array([[0,1],[1,2],[2,3],[3,0]]), [1,0,0])
 
-                    lines = create_aabb(flat)
+                    #lines = create_aabb(flat)
                     
                     '''
                     vis = o3d.visualization.Visualizer()
@@ -531,7 +548,7 @@ with open(imagesTxt_path, 'r') as f:
                     # Add to the total point cloud
                     point_cloud += current_point_cloud
 
-            if count >= 100:
+            if count >= 20:
                 break
 
 
