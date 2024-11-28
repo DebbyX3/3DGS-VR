@@ -158,18 +158,23 @@ def createSphericalPointCloud(sourcepc, radius, xc, yc, zc):
 
 def createEquirectangularPointCloud(sourcepc, radius, xc, yc, zc):
 
-    x = np.asarray(sourcepc.points)[:,0]
-    y = np.asarray(sourcepc.points)[:,1]
-    z = np.asarray(sourcepc.points)[:,2]
+    # normalize to be centered in the center of the axis / scene
+    x = np.asarray(sourcepc.points)[:,0] - xc
+    y = np.asarray(sourcepc.points)[:,1] - yc
+    z = np.asarray(sourcepc.points)[:,2] - zc
     
-    #radius = np.sqrt(x**2 + y**2 + z**2) #tbh ce l'ho già, no?
+    print("raggio mio: ", radius)
+    radius = (np.sqrt(x**2 + y**2 + z**2)) #tbh ce l'ho già, no?
+    radius.astype(int)
+    print("raggio calcolato: ", radius)
 
     # Convert cartesian coordinates to spherical coordinates
+    ratio = y / radius
+    out_of_range = ratio[(ratio < -1) | (ratio > 1)]
+    print("Valori fuori range:", out_of_range)
+
     theta = np.arctan2(z, x)
     phi = np.arcsin(y/radius)
-
-    print("theta: ", theta)
-    print("phi: ", phi)
 
     width =  4096
     height = 2048
@@ -200,14 +205,29 @@ def createEquirectangularPointCloud(sourcepc, radius, xc, yc, zc):
     pointcloudnorm.colors = sourcepc.colors
 
     # Create a new raster image
-    img = np.zeros((height, width, 3), dtype=np.uint8)
+    img = np.zeros((height, width, 3), dtype=np.uint8) + 255 # White background
 
     # Assign colors to the raster image
     for i in range(len(pointcloudnorm.points)):
-        #for i in range(50):
         (x, y, z) = np.asarray(pointcloudnorm.points[i], dtype=int)
-        #print(x, y, z)
         img[y-1, x-1] = (np.asarray(sourcepc.colors)[i] * 255).astype(np.uint8)
+
+    #color_stack = np.zeros((height, width, 3), dtype=np.uint8)
+
+    #una lista di array come 3 par, come faccio?
+
+
+
+    
+    '''
+    # loop on altezza e lung
+    for i in range(height):
+        for k in range(width):
+            groda = np.where(pointcloudnorm.points == [k, i, 0])
+            color_stack[k, i] = np.asarray((pointcloudnorm.select_by_index(groda)).colors)
+    '''
+
+
 
     '''in the pointcloudnorm point cloud, i want to multiplicate each dimension for a number 
     (dimension 0 for width, dimension 1 for height). 
@@ -602,15 +622,17 @@ cropped_point_cloud = point_cloud.select_by_index(indexes_points_outside_sphere)
 # Pass the new cropped point cloud and the center to the sphere function
 sphere = createSphericalPointCloud(cropped_point_cloud, 5, center_coord[0], center_coord[1], center_coord[2])
 
-
-# add center to the point cloud
-sphere.points.append(center_coord)
+# add center to a gimmick point cloud
+# just to visualize the center
+center_point_cloud = o3d.geometry.PointCloud()
+center_point_cloud.points.append(center_coord)
 #paint it magenta
-sphere.colors.append(([1, 0, 1]))
-#o3d.visualization.draw_geometries([sphere])
+center_point_cloud.colors.append(([1, 0, 1]))
+
+#o3d.visualization.draw_geometries([sphere, center_point_cloud])
 
 equiImg = createEquirectangularPointCloud(sphere, 5, center_coord[0], center_coord[1], center_coord[2])
-print(equiImg)
+#print(equiImg)
 o3d.visualization.draw_geometries([equiImg])
 
 '''
