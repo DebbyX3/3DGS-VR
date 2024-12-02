@@ -6,6 +6,8 @@ import matplotlib
 matplotlib.use('TkAgg')
 import pylab as plt
 from typing import Union
+import time
+import random
 
 def read_array(path):
     with open(path, "rb") as fid:
@@ -106,7 +108,7 @@ def get_spherical_pcd(source,x0,y0,z0,r1):
 The following python method takes an Open3D PointCloud geometry, 
 and the radius (r1) and center (x0,y0,z0) of the sphere to project on.
 '''
-def createSphericalPointCloud(sourcepc, radius, xc, yc, zc):
+def createSphericalPointCloud(source_point_cloud, radius, xc, yc, zc):
     # For each point in the point cloud, find the intersection with the sphere
     # Practically, draw the line between the center of the sphere and the point in the point cloud, then find the intersection with the sphere
 
@@ -115,7 +117,7 @@ def createSphericalPointCloud(sourcepc, radius, xc, yc, zc):
     # Find the direction vector (a, b, c) between the center (C) of the sphere and the point (P) on the point cloud
     # to compute the equation of the line
     # P - C = (xp - xc, yp - yc, zp - zc) = (a, b, c) (and NOT C - P)
-    directionVector = sourcepc.points - np.array([xc, yc, zc])
+    directionVector = source_point_cloud.points - np.array([xc, yc, zc])
 
     a = directionVector[:,0]
     b = directionVector[:,1]
@@ -147,77 +149,96 @@ def createSphericalPointCloud(sourcepc, radius, xc, yc, zc):
     # This is the final form that is written in the code below :)
     # The above steps are just for understanding
 
-    intersecX = xc + a * (radius / np.sqrt(a**2 + b**2 + c**2))
-    intersecY = yc + b * (radius / np.sqrt(a**2 + b**2 + c**2))
-    intersecZ = zc + c * (radius / np.sqrt(a**2 + b**2 + c**2))
+    
+
+    t = (radius / np.sqrt(a**2 + b**2 + c**2)) 
+    
+    intersecX = xc + a * t
+    intersecY = yc + b * t
+    intersecZ = zc + c * t
     
     outputpc.points = o3d.utility.Vector3dVector(np.column_stack((intersecX, intersecY, intersecZ)))
-    outputpc.colors = sourcepc.colors
+    outputpc.colors = source_point_cloud.colors
+
+    #comments to keep in mind: next, remove a point if the line magnitude is 0
+    '''
+    line_magnitude = np.sqrt(a**2 + b**2 + c**2)
+
+    groda = np.where(line_magnitude == 0) # the line is a point! ignore it and delete from point cloud
+    
+    t = np.divide(radius, line_magnitude, out=1, where = line_magnitude != 0)
+
+    # Remove the point with the known index
+    known_index = 0  # Replace with the actual index you want to remove
+    sourcepc.points = o3d.utility.Vector3dVector(np.delete(np.asarray(sourcepc.points), known_index, axis=0))
+    sourcepc.colors = o3d.utility.Vector3dVector(np.delete(np.asarray(sourcepc.colors), known_index, axis=0))
+    '''
 
     return outputpc
 
-def createEquirectangularPointCloud(sourcepc, radius, xc, yc, zc):
+def createEquirectangularPointCloud(source_point_cloud, radius, xc, yc, zc):
 
-    # normalize to be centered in the center of the axis / scene
-    x = np.asarray(sourcepc.points)[:,0] - xc
-    y = np.asarray(sourcepc.points)[:,1] - yc
-    z = np.asarray(sourcepc.points)[:,2] - zc
+    # Normalize coord so the sphere is centered in the center of the axis / scene
+    x = np.asarray(source_point_cloud.points)[:,0] - xc
+    y = np.asarray(source_point_cloud.points)[:,1] - yc
+    z = np.asarray(source_point_cloud.points)[:,2] - zc
     
-    print("raggio mio: ", radius)
-    radius = (np.sqrt(x**2 + y**2 + z**2)) #tbh ce l'ho già, no?
+    radius = (np.sqrt(x**2 + y**2 + z**2)) # I already have it, but re-do the proper calculation just to be sure
     radius.astype(int)
-    print("raggio calcolato: ", radius)
 
     # Convert cartesian coordinates to spherical coordinates
     ratio = y / radius
     out_of_range = ratio[(ratio < -1) | (ratio > 1)]
     print("Valori fuori range:", out_of_range)
 
+    # Polar coordinates
     theta = np.arctan2(z, x)
     phi = np.arcsin(y/radius)
 
-    width =  4096
-    height = 2048
+    # Image size
+    width =  2048
+    height = 1024
 
+    # Now that I have polar coords, convert to equirectangular image
     uCloud = (theta / (2 * np.pi)) * width              # from -pi to pi
     vCloud = (1 - (phi + np.pi / 2) / np.pi) * height   # from pi/2 to -pi/2
 
-    # in una point cloud
-    outputpc = o3d.geometry.PointCloud()
-    outputpc.points = o3d.utility.Vector3dVector(np.column_stack((uCloud, vCloud, np.zeros(uCloud.size))))
-    outputpc.colors = sourcepc.colors
+    '''
+    # Let this commented:
+    # This is the point cloud obtainted directly from the equirect calculations
+    # It is not normalized, but I'm keeping it here for reference
 
-    #cicla sui punti della nuvola e fai una conversione a intero per arrivare a pixel
-    #sigh non so se ho captito bene, forse meglio se normalizzo tutto da 0 a 1 e poi alla fine moltiplicare per alt e largh e castare a intero per avere i pixel
-    # per ora ignora il blending
+    equirect_point_cloud = o3d.geometry.PointCloud()
+    equirect_point_cloud.points = o3d.utility.Vector3dVector(np.column_stack((uCloud, vCloud, np.zeros(uCloud.size))))
+    equirect_point_cloud.colors = sourcepc.colors
+    '''
 
-    # convert to image coordinates normalizing to the image size
-    #normalizza u e v da 0 a 1
+    # ---- Equirectangle Point Cloud
+    # Normalize point U and V to be between 0 and 1
     uCloudNorm = (uCloud - np.min(uCloud)) / (np.max(uCloud) - np.min(uCloud))
     vCloudNorm = (vCloud - np.min(vCloud)) / (np.max(vCloud) - np.min(vCloud))
 
-    # Multiply each dimension for width and height
+    # Then, multiply each dimension for width and height to stay in the image range
     uCloudNorm *= width
     vCloudNorm *= height
 
-    pointcloudnorm = o3d.geometry.PointCloud()
-    pointcloudnorm.points = o3d.utility.Vector3dVector(np.column_stack((uCloudNorm, vCloudNorm, np.zeros(uCloud.size))))
-    pointcloudnorm.colors = sourcepc.colors
+    # Fill a point cloud with the equirectangle normalized points
+    normalized_equirect_point_cloud = o3d.geometry.PointCloud()
+    normalized_equirect_point_cloud.points = o3d.utility.Vector3dVector(np.column_stack((uCloudNorm, vCloudNorm, np.zeros(uCloud.size))))
+    normalized_equirect_point_cloud.colors = source_point_cloud.colors    
 
+    # ---- Equirectangle Image
+    # Just assign each cloud point color to the same pixel in the image
     # Create a new raster image
     img = np.zeros((height, width, 3), dtype=np.uint8) + 255 # White background
-
+ 
     # Assign colors to the raster image
-    for i in range(len(pointcloudnorm.points)):
-        (x, y, z) = np.asarray(pointcloudnorm.points[i], dtype=int)
-        img[y-1, x-1] = (np.asarray(sourcepc.colors)[i] * 255).astype(np.uint8)
+    for i in range(len(normalized_equirect_point_cloud.points)):
+        (x, y, z) = np.asarray(normalized_equirect_point_cloud.points[i], dtype=int)
+        img[y-1, x-1] = (np.asarray(source_point_cloud.colors)[i] * 255).astype(np.uint8)
 
     #color_stack = np.zeros((height, width, 3), dtype=np.uint8)
-
     #una lista di array come 3 par, come faccio?
-
-
-
     
     '''
     # loop on altezza e lung
@@ -227,28 +248,14 @@ def createEquirectangularPointCloud(sourcepc, radius, xc, yc, zc):
             color_stack[k, i] = np.asarray((pointcloudnorm.select_by_index(groda)).colors)
     '''
 
-
-
-    '''in the pointcloudnorm point cloud, i want to multiplicate each dimension for a number 
-    (dimension 0 for width, dimension 1 for height). 
-    then, i want to take the color of that point and assign it to a new raster image'''
-
+    '''
     # Visualizza l'immagine
     plt.imshow(img)
     plt.axis('off')
     plt.show()
+    '''
 
-    return outputpc
-
-'''
-    img = np.zeros((height, width, 3), dtype=np.uint8)
-    for x, y in zip(u.astype(int), v.astype(int)):
-        img[y, x] = [255, 255, 255]  # Colore bianco
-
-    plt.imshow(img)
-    plt.axis('off')
-    plt.show()
-'''
+    return normalized_equirect_point_cloud
 
 def pick_points(pcd):
 
@@ -260,13 +267,83 @@ def pick_points(pcd):
     print("2) After picking points, press q to close the window")
     print("")
 
+    '''
+    vis = o3d.visualization.VisualizerWithEditing()
+    vis.create_window()
+    vis.add_geometry(pcd)  
+
+    view_control = vis.get_view_control()
+    view_control.set_constant_z_near(400)
+
+    vis.run()  # user picks points
+    vis.destroy_window()    
+    '''
+
     vis = o3d.visualization.VisualizerWithEditing()
     vis.create_window()
     vis.add_geometry(pcd)
-    vis.run()  # user picks points
-    vis.destroy_window()
+    
+    # Ottieni il controllo della vista
+    view_control = vis.get_view_control()
 
-    print("")
+    # Modifica i parametri della telecamera
+    camera_params = view_control.convert_to_pinhole_camera_parameters()
+
+    # Avvicina la telecamera lungo l'asse Z
+    extrinsic = np.array(camera_params.extrinsic, copy=True)
+
+    # Stampa gli estrinseci iniziali
+    print("Extrinsics prima:")
+    print(extrinsic[2,3])
+
+    extrinsic[2, 3] = 100  # Sposta la telecamera verso la scena lungo l'asse Z
+    camera_params.extrinsic = extrinsic
+
+    # Stampa gli estrinseci modificati
+    print("Extrinsics dopo:")
+    print(extrinsic[2,3])
+
+    # Applica i nuovi parametri
+    view_control.convert_from_pinhole_camera_parameters(camera_params, allow_arbitrary=True)
+
+    # Forza l'aggiornamento del rendering
+    vis.poll_events()
+    vis.update_renderer()
+
+
+    # Esegui il visualizzatore
+    vis.run()
+    vis.destroy_window()
+    
+
+
+    '''
+    vis = o3d.visualization.VisualizerWithEditing()
+    vis.create_window()
+    vis.add_geometry(pcd)  
+
+    dt = 0.2
+    s = time.time()
+
+    # run non-blocking visualization.
+    keep_running = True
+    while keep_running:
+
+        if time.time() - s > dt:
+            # workaround.
+            # 1) Comment the 3 lines for the original behavior.
+            # 2) Only comment the 1st and 3rd lines for reset only.
+            # 3) Uncomment the 3 lines for the complete workaround.
+            #cam = vis.get_view_control().convert_to_pinhole_camera_parameters()
+            vis.reset_view_point(True)
+            #vis.get_view_control().convert_from_pinhole_camera_parameters(cam, allow_arbitrary=True)
+
+        keep_running = vis.poll_events()
+        vis.update_renderer()
+
+    vis.destroy_window()
+    '''
+    
 
     return vis.get_picked_points()
 
@@ -336,6 +413,11 @@ cameraTxt_path = '../colmap_reconstructions/colmap_output_simple_radial/sparse/c
 imagesTxt_path = '../colmap_reconstructions/colmap_output_simple_radial/sparse/images.txt'
 imgs_folder = "../colmap_reconstructions/colmap_output_simple_radial/dense/images"
 depth_map_folder = '../colmap_reconstructions/colmap_output_simple_radial/dense/stereo/depth_maps'
+
+cameraTxt_path = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/sparse/cameras.txt'
+imagesTxt_path = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/sparse/images.txt'
+imgs_folder = "../colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/images"
+depth_map_folder = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/stereo/depth_maps'
 
 # ************************** EXTRACT INTRINSICS FROM CAMERA.TXT FILE **************************
 # Intrinsics matrix:
@@ -452,128 +534,138 @@ with open(imagesTxt_path, 'r') as f:
         # Ignore comments
         if not line.startswith("#"):
             count+=1
-            #count += 7
-            print(count)
 
             if(count > 0):
-
                 if count % 2 != 0: # Read every other line (skip the second line for every image)
-                
-                    single_camera_info = line.split() # split every field in line
-                    cameras_info.append(single_camera_info) # and store them as separate fields as list in a list ( [ [] ] )
+                    if count % 19 == 0: # salta tot righe
+                        
+                        print(count)
 
-                    # Images info contains:
-                    # IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
-                    # 0         1   2   3   4   5   6   7   8          9
+                        single_camera_info = line.split() # split every field in line
+                        cameras_info.append(single_camera_info) # and store them as separate fields as list in a list ( [ [] ] )
 
-                    # CREATE ROTATION MATRIX 'R' FROM QUATERNIONS
-                    quaternions = np.array([single_camera_info[1], single_camera_info[2], single_camera_info[3], single_camera_info[4]]) # numpy array
-                    rotation_matrix = o3d.geometry.get_rotation_matrix_from_quaternion(quaternions)
+                        # Images info contains:
+                        # IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
+                        # 0         1   2   3   4   5   6   7   8          9
 
-                    # CREATE TRANSLATION VECTOR T
-                    translation = np.array([single_camera_info[5], single_camera_info[6], single_camera_info[7]], dtype = float)
+                        # CREATE ROTATION MATRIX 'R' FROM QUATERNIONS
+                        quaternions = np.array([single_camera_info[1], single_camera_info[2], single_camera_info[3], single_camera_info[4]]) # numpy array
+                        rotation_matrix = o3d.geometry.get_rotation_matrix_from_quaternion(quaternions)
 
-                    # CREATE EXTRINSICS MATRIX                
-                    extrinsics_matrix = np.vstack([np.hstack([rotation_matrix, translation.reshape(3, 1)]), 
-                                                    np.array([0, 0, 0, 1])])
+                        # CREATE TRANSLATION VECTOR T
+                        translation = np.array([single_camera_info[5], single_camera_info[6], single_camera_info[7]], dtype = float)
 
-                    cameras_extrinsics.append(extrinsics_matrix)
+                        # CREATE EXTRINSICS MATRIX                
+                        extrinsics_matrix = np.vstack([np.hstack([rotation_matrix, translation.reshape(3, 1)]), 
+                                                        np.array([0, 0, 0, 1])])
 
-                    #alternatively, to create the extrinsics
-                    '''
-                    #(qw, qx, qy, qz, tx, ty, tz):
-                    extrinsics_matrix = extrinsics_from_quaternion_and_translation(single_camera_info[1], single_camera_info[2], single_camera_info[3], single_camera_info[4], single_camera_info[5], single_camera_info[6], single_camera_info[7])
+                        cameras_extrinsics.append(extrinsics_matrix)
 
-                    print("new Extrinsic matrix:\n", extrinsics_matrix)
-                    '''
+                        #alternatively, to create the extrinsics
+                        '''
+                        #(qw, qx, qy, qz, tx, ty, tz):
+                        extrinsics_matrix = extrinsics_from_quaternion_and_translation(single_camera_info[1], single_camera_info[2], single_camera_info[3], single_camera_info[4], single_camera_info[5], single_camera_info[6], single_camera_info[7])
+
+                        print("new Extrinsic matrix:\n", extrinsics_matrix)
+                        '''
+                        
+                        # Take the image file name
+                        img_filename = single_camera_info[9]
+
+                        # Read the depth map
+                        depth_map_filename = img_filename + '.geometric.bin' # get the filename of the depth map
+                        depth_map_path = os.path.join(depth_map_folder, depth_map_filename)
+                        
+                        depth = read_array(depth_map_path)
+                        max_depth = np.max(depth)
+                        depth[depth == 0] = max_depth # points with 0 depth are set to the maximum depth value to mimic the infinity
+
+                        depth = o3d.geometry.Image(depth) # convert to Open3D image
+
+                        # Visualizza
+                        #plt.imshow(depth)
+                        #plt.axis('off')
+                        #plt.show()
+
+
+                        # Read the image
+                        img_path = os.path.join(imgs_folder, img_filename)
+                        img = o3d.io.read_image(img_path)
+                        rgb = o3d.geometry.Image(img)
+                        
+                        # Create the RGBD image
+                        rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(rgb, depth, depth_trunc=1000.0, depth_scale = 1.0, convert_rgb_to_intensity=False)
+
+                        # Create point cloud 
+                        current_point_cloud = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic, extrinsics_matrix)
+
+                        # Add to the total point cloud
+                        point_cloud += current_point_cloud
+
+                        '''
+                        # Plot both image and depth map
+                        plt.subplot(1, 2, 1)
+                        plt.title('Redwood grayscale image')
+                        plt.imshow(rgbd.color)
+                        plt.subplot(1, 2, 2)
+                        plt.title('Redwood depth image')
+                        plt.imshow(rgbd.depth, cmap='plasma')
+                        plt.show()
+                        '''
+
+                        '''
+                        The following function takes an Open3D PointCloud, equation of a plane (A, B, C, and D) 
+                        and the optical center and returns a planar Open3D PointCloud Geometry.
+                        z = 0
+                        '''
+                        '''
+                        flat = get_flattened_pcds2(current_point_cloud, 0, 0, 1, 0, 0, 0, -4)
+                        flat.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]) #flip it
+
+                        x_max = np.max(np.asarray(flat.points)[:,0])
+                        y_max = np.max(np.asarray(flat.points)[:,1])
+                        z_max = np.max(np.asarray(flat.points)[:,2])
+
+                        x_min = np.min(np.asarray(flat.points)[:,0])
+                        y_min = np.min(np.asarray(flat.points)[:,1])
+                        z_min = np.min(np.asarray(flat.points)[:,2])
+
+                        max_point = np.array([x_max, y_max, z_max])
+                        min_point = np.array([x_min, y_min, z_min])
+
+                        groda1 = np.array([x_max, y_min, z_max])
+                        groda2 = np.array([x_min, y_max, z_max])  
+
+                        groda = flat.get_axis_aligned_bounding_box()
+                        '''
                     
-                    # Take the image file name
-                    img_filename = single_camera_info[9]
+                        #lines = create_lines(np.array([[1,1,0],[1,-1,0],[-1,1,0],[-1,-1,0]]), np.array([[0,1],[1,3],[3,2],[2,0]]), [1,0,0])
+                        #lines = create_lines(np.array([first, [1,-1,0],[-1,1,0],[-1,-1,0]]), np.array([[0,1],[1,3],[3,2],[2,0]]), [1,0,0])
+                        #lines = create_lines(np.array([groda1, max_point, groda2, min_point]), np.array([[0,1],[1,2],[2,3],[3,0]]), [1,0,0])
 
-                    # Read the depth map
-                    depth_map_filename = img_filename + '.geometric.bin' # get the filename of the depth map
-                    depth_map_path = os.path.join(depth_map_folder, depth_map_filename)
-                    
-                    depth = o3d.geometry.Image(read_array(depth_map_path)) 
+                        #lines = create_aabb(flat)
+                        
+                        '''
+                        vis = o3d.visualization.Visualizer()
+                        
+                        vis.create_window()
+                        vis.add_geometry(flat)
+                        vis.poll_events()
+                        vis.update_renderer()
+                        vis.capture_screen_image("groda.jpg")
+                        '''
 
-                    # Read the image
-                    img_path = os.path.join(imgs_folder, img_filename)
-                    img = o3d.io.read_image(img_path)
-                    rgb = o3d.geometry.Image(img)
-                    
-                    # Create the RGBD image
-                    rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(rgb, depth, depth_trunc=1000.0, depth_scale = 1.0, convert_rgb_to_intensity=False)
+                        #o3d.visualization.draw_geometries([flat, lines, groda])                      
 
-                    '''
-                    # Plot both image and depth map
-                    plt.subplot(1, 2, 1)
-                    plt.title('Redwood grayscale image')
-                    plt.imshow(rgbd.color)
-                    plt.subplot(1, 2, 2)
-                    plt.title('Redwood depth image')
-                    plt.imshow(rgbd.depth, cmap='plasma')
-                    plt.show()
-                    '''
+            #if count >= 100:
+            #    break
 
-                    # Create the point cloud
-                    #point_cloud += o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic, extrinsics_matrix)
 
-                    current_point_cloud = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic, extrinsics_matrix)
-
-                    '''
-                    The following function takes an Open3D PointCloud, equation of a plane (A, B, C, and D) 
-                    and the optical center and returns a planar Open3D PointCloud Geometry.
-                    z = 0
-                    '''
-                    flat = get_flattened_pcds2(current_point_cloud, 0, 0, 1, 0, 0, 0, -4)
-                    flat.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]) #flip it
-
-                    x_max = np.max(np.asarray(flat.points)[:,0])
-                    y_max = np.max(np.asarray(flat.points)[:,1])
-                    z_max = np.max(np.asarray(flat.points)[:,2])
-
-                    x_min = np.min(np.asarray(flat.points)[:,0])
-                    y_min = np.min(np.asarray(flat.points)[:,1])
-                    z_min = np.min(np.asarray(flat.points)[:,2])
-
-                    max_point = np.array([x_max, y_max, z_max])
-                    min_point = np.array([x_min, y_min, z_min])
-
-                    groda1 = np.array([x_max, y_min, z_max])
-                    groda2 = np.array([x_min, y_max, z_max])  
-
-                    groda = flat.get_axis_aligned_bounding_box()
-                
-                    #lines = create_lines(np.array([[1,1,0],[1,-1,0],[-1,1,0],[-1,-1,0]]), np.array([[0,1],[1,3],[3,2],[2,0]]), [1,0,0])
-                    #lines = create_lines(np.array([first, [1,-1,0],[-1,1,0],[-1,-1,0]]), np.array([[0,1],[1,3],[3,2],[2,0]]), [1,0,0])
-                    #lines = create_lines(np.array([groda1, max_point, groda2, min_point]), np.array([[0,1],[1,2],[2,3],[3,0]]), [1,0,0])
-
-                    #lines = create_aabb(flat)
-                    
-                    '''
-                    vis = o3d.visualization.Visualizer()
-                    
-                    vis.create_window()
-                    vis.add_geometry(flat)
-                    vis.poll_events()
-                    vis.update_renderer()
-                    vis.capture_screen_image("groda.jpg")
-                    '''
-
-                    #o3d.visualization.draw_geometries([flat, lines, groda])
-                    
-                    # Load 
-                    current_point_cloud = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic, extrinsics_matrix)
-
-                    # Add to the total point cloud
-                    point_cloud += current_point_cloud
-
-            if count >= 20:
-                break
 
 
 # Flip it, otherwise the point cloud will be upside down
 point_cloud.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+point_cloud.points = o3d.utility.Vector3dVector(np.asarray(point_cloud.points) * 1000) # test, fai la pc più grande
 
 # **** SPHERIC PROJECTION
 
@@ -617,7 +709,7 @@ indexes_points_outside_sphere = np.where(distances_from_center > sphere_radius)[
 cropped_point_cloud = point_cloud.select_by_index(indexes_points_outside_sphere)
 
 # Visualize
-#o3d.visualization.draw_geometries([cropped_point_cloud]) #2
+#o3d.visualization.draw_geometries([cropped_point_cloud])
 
 # Pass the new cropped point cloud and the center to the sphere function
 sphere = createSphericalPointCloud(cropped_point_cloud, 5, center_coord[0], center_coord[1], center_coord[2])
@@ -629,9 +721,9 @@ center_point_cloud.points.append(center_coord)
 #paint it magenta
 center_point_cloud.colors.append(([1, 0, 1]))
 
-#o3d.visualization.draw_geometries([sphere, center_point_cloud])
+o3d.visualization.draw_geometries([sphere, center_point_cloud])
 
-equiImg = createEquirectangularPointCloud(sphere, 5, center_coord[0], center_coord[1], center_coord[2])
+equiImg = createEquirectangularPointCloud(sphere, 2, center_coord[0], center_coord[1], center_coord[2])
 #print(equiImg)
 o3d.visualization.draw_geometries([equiImg])
 
