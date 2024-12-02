@@ -233,12 +233,13 @@ def createEquirectangularPointCloud(source_point_cloud, radius, xc, yc, zc):
     img = np.zeros((height, width, 3), dtype=np.uint8) + 255 # White background
  
     # Assign colors to the raster image
-    for i in range(len(normalized_equirect_point_cloud.points)):
-        (x, y, z) = np.asarray(normalized_equirect_point_cloud.points[i], dtype=int)
-        img[y-1, x-1] = (np.asarray(source_point_cloud.colors)[i] * 255).astype(np.uint8)
+    colors = (np.asarray(source_point_cloud.colors) * 255).astype(np.uint8)
+    u_indices = (np.asarray(normalized_equirect_point_cloud.points)[:, 0] - 1).astype(int)
+    v_indices = (np.asarray(normalized_equirect_point_cloud.points)[:, 1] - 1).astype(int)
+    img[v_indices, u_indices] = colors
 
-    #color_stack = np.zeros((height, width, 3), dtype=np.uint8)
-    #una lista di array come 3 par, come faccio?
+    #    (x, y, z) = np.asarray(normalized_equirect_point_cloud.points[i], dtype=int)
+    #    img[y-1, x-1] = (np.asarray(source_point_cloud.colors)[i] * 255).astype(np.uint8)
     
     '''
     # loop on altezza e lung
@@ -248,12 +249,12 @@ def createEquirectangularPointCloud(source_point_cloud, radius, xc, yc, zc):
             color_stack[k, i] = np.asarray((pointcloudnorm.select_by_index(groda)).colors)
     '''
 
-    '''
+    
     # Visualizza l'immagine
     plt.imshow(img)
     plt.axis('off')
     plt.show()
-    '''
+    
 
     return normalized_equirect_point_cloud
 
@@ -537,7 +538,7 @@ with open(imagesTxt_path, 'r') as f:
 
             if(count > 0):
                 if count % 2 != 0: # Read every other line (skip the second line for every image)
-                    if count % 19 == 0: # salta tot righe
+                    if count % 1 == 0: # salta tot righe
                         
                         print(count)
 
@@ -711,6 +712,17 @@ cropped_point_cloud = point_cloud.select_by_index(indexes_points_outside_sphere)
 # Visualize
 #o3d.visualization.draw_geometries([cropped_point_cloud])
 
+
+
+
+
+#mi porto via la distanza dal centro della scena per ogni punto PRIMA di fare la sfera
+# poi, per ogni punto che cade nella stessa posizione, prendo quello con la distanza minore
+
+
+
+
+
 # Pass the new cropped point cloud and the center to the sphere function
 sphere = createSphericalPointCloud(cropped_point_cloud, 5, center_coord[0], center_coord[1], center_coord[2])
 
@@ -726,6 +738,11 @@ o3d.visualization.draw_geometries([sphere, center_point_cloud])
 equiImg = createEquirectangularPointCloud(sphere, 2, center_coord[0], center_coord[1], center_coord[2])
 #print(equiImg)
 o3d.visualization.draw_geometries([equiImg])
+
+
+
+
+
 
 '''
 #Save pointcloud to file
