@@ -161,6 +161,7 @@ def createSphericalPointCloud(source_point_cloud, radius, xc, yc, zc):
     outputpc.colors = source_point_cloud.colors
 
     #comments to keep in mind: next, remove a point if the line magnitude is 0
+    # potrei tenermi gli indici dei punti le levo così non  faccio casino?? parlo di quando dopo uso cropped_dist_from_center per le distanze
     '''
     line_magnitude = np.sqrt(a**2 + b**2 + c**2)
 
@@ -176,7 +177,7 @@ def createSphericalPointCloud(source_point_cloud, radius, xc, yc, zc):
 
     return outputpc
 
-def createEquirectangularPointCloud(source_point_cloud, radius, xc, yc, zc):
+def createEquirectangularPointCloud(source_point_cloud, radius, xc, yc, zc, dist_from_center):
 
     # Normalize coord so the sphere is centered in the center of the axis / scene
     x = np.asarray(source_point_cloud.points)[:,0] - xc
@@ -227,28 +228,90 @@ def createEquirectangularPointCloud(source_point_cloud, radius, xc, yc, zc):
     normalized_equirect_point_cloud.points = o3d.utility.Vector3dVector(np.column_stack((uCloudNorm, vCloudNorm, np.zeros(uCloud.size))))
     normalized_equirect_point_cloud.colors = source_point_cloud.colors    
 
+    '''
+    # Test inutile, mi sa che si può levare
+    for _ in range (0, 10):
+        h = random.randint(0, height-1)
+        w = random.randint(0, width-1)
+
+        # Find the point in the point cloud with the given x and y coordinates
+        index = np.where((np.asarray(normalized_equirect_point_cloud.points)[:, 0] == w) & 
+                 (np.asarray(normalized_equirect_point_cloud.points)[:, 1] == h))[0]
+
+        if index.size > 0:
+            point_coords = np.asarray(normalized_equirect_point_cloud.points)[index[0]]
+        else:
+            point_coords = None
+    '''    
+
     # ---- Equirectangle Image
     # Just assign each cloud point color to the same pixel in the image
     # Create a new raster image
     img = np.zeros((height, width, 3), dtype=np.uint8) + 255 # White background
- 
-    # Assign colors to the raster image
+
+    '''
+    # This works, but just 4 test let it commented
+    # Assign colors to the raster image (new loopless method)
     colors = (np.asarray(source_point_cloud.colors) * 255).astype(np.uint8)
     u_indices = (np.asarray(normalized_equirect_point_cloud.points)[:, 0] - 1).astype(int)
     v_indices = (np.asarray(normalized_equirect_point_cloud.points)[:, 1] - 1).astype(int)
     img[v_indices, u_indices] = colors
 
-    #    (x, y, z) = np.asarray(normalized_equirect_point_cloud.points[i], dtype=int)
-    #    img[y-1, x-1] = (np.asarray(source_point_cloud.colors)[i] * 255).astype(np.uint8)
-    
+    # Assign colors to the raster image (old loop method)
+    for i in range(len(normalized_equirect_point_cloud.points)):
+        (x, y, z) = np.asarray(normalized_equirect_point_cloud.points[i], dtype=int)
+        img[y-1, x-1] = (np.asarray(source_point_cloud.colors)[i] * 255).astype(np.uint8)
     '''
+
+    '''
+    # TEST COPIL
+    # Create a dictionary to store the closest point for each (u, v) coordinate
+    closest_points = {}
+
+    # Iterate over all points in the normalized equirectangular point cloud
+    for i in range(len(uCloudNorm)):
+        u = int(uCloudNorm[i])
+        v = int(vCloudNorm[i])
+        dist = cropped_dist_from_center[i]
+        
+        # If the (u, v) coordinate is not in the dictionary or the current point is closer, update the dictionary
+        if (u, v) not in closest_points or dist < closest_points[(u, v)][1]:
+            closest_points[(u, v)] = (i, dist)
+
+    # Assign colors to the raster image using the closest points
+    for (u, v), (index, _) in closest_points.items():
+        img[v, u] = (np.asarray(source_point_cloud.colors)[index] * 255).astype(np.uint8)
+    '''
+
+    ''''''
+    # Test: prova a usare la distanza per scrivere in una lista il punto più vicino per ogni pixel
+    # Create a dictionary to store the closest point for each (u, v) coordinate
+    closest_points = {}
+    points = np.asarray(normalized_equirect_point_cloud.points, dtype=int)
+
+    for i, (x, y, z) in enumerate(points):
+        dist = cropped_dist_from_center[i]
+
+        # If the (x, y) coordinate is not in the dictionary or the current point is closer, update the dictionary
+        if (x, y) not in closest_points or dist < closest_points[(x, y)][1]:
+            closest_points[(x, y)] = (i, dist)
+
+    # Assign colors to the raster image using the closest points
+    colors = (np.asarray(source_point_cloud.colors) * 255).astype(np.uint8)
+    for (u, v), (index, _) in closest_points.items():
+        img[v-1, u-1] = colors[index]
+
+    ''''''
+
+
+    '''
+    # test inutile
     # loop on altezza e lung
     for i in range(height):
         for k in range(width):
             groda = np.where(pointcloudnorm.points == [k, i, 0])
             color_stack[k, i] = np.asarray((pointcloudnorm.select_by_index(groda)).colors)
     '''
-
     
     # Visualizza l'immagine
     plt.imshow(img)
@@ -538,7 +601,7 @@ with open(imagesTxt_path, 'r') as f:
 
             if(count > 0):
                 if count % 2 != 0: # Read every other line (skip the second line for every image)
-                    if count % 1 == 0: # salta tot righe
+                    if count % 25 == 0: # salta tot righe
                         
                         print(count)
 
@@ -708,19 +771,11 @@ indexes_points_outside_sphere = np.where(distances_from_center > sphere_radius)[
 
 # Create a new point cloud with the points outside the sphere
 cropped_point_cloud = point_cloud.select_by_index(indexes_points_outside_sphere)
+# Take only the distances of the points outside the sphere
+cropped_dist_from_center = distances_from_center[indexes_points_outside_sphere]
 
 # Visualize
 #o3d.visualization.draw_geometries([cropped_point_cloud])
-
-
-
-
-
-#mi porto via la distanza dal centro della scena per ogni punto PRIMA di fare la sfera
-# poi, per ogni punto che cade nella stessa posizione, prendo quello con la distanza minore
-
-
-
 
 
 # Pass the new cropped point cloud and the center to the sphere function
@@ -735,7 +790,7 @@ center_point_cloud.colors.append(([1, 0, 1]))
 
 o3d.visualization.draw_geometries([sphere, center_point_cloud])
 
-equiImg = createEquirectangularPointCloud(sphere, 2, center_coord[0], center_coord[1], center_coord[2])
+equiImg = createEquirectangularPointCloud(sphere, 2, center_coord[0], center_coord[1], center_coord[2], cropped_dist_from_center)
 #print(equiImg)
 o3d.visualization.draw_geometries([equiImg])
 
