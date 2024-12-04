@@ -8,6 +8,7 @@ import pylab as plt
 from typing import Union
 import time
 import random
+from collections import defaultdict
 
 def read_array(path):
     with open(path, "rb") as fid:
@@ -228,22 +229,6 @@ def createEquirectangularPointCloud(source_point_cloud, radius, xc, yc, zc, dist
     normalized_equirect_point_cloud.points = o3d.utility.Vector3dVector(np.column_stack((uCloudNorm, vCloudNorm, np.zeros(uCloud.size))))
     normalized_equirect_point_cloud.colors = source_point_cloud.colors    
 
-    '''
-    # Test inutile, mi sa che si può levare
-    for _ in range (0, 10):
-        h = random.randint(0, height-1)
-        w = random.randint(0, width-1)
-
-        # Find the point in the point cloud with the given x and y coordinates
-        index = np.where((np.asarray(normalized_equirect_point_cloud.points)[:, 0] == w) & 
-                 (np.asarray(normalized_equirect_point_cloud.points)[:, 1] == h))[0]
-
-        if index.size > 0:
-            point_coords = np.asarray(normalized_equirect_point_cloud.points)[index[0]]
-        else:
-            point_coords = None
-    '''    
-
     # ---- Equirectangle Image
     # Just assign each cloud point color to the same pixel in the image
     # Create a new raster image
@@ -261,26 +246,6 @@ def createEquirectangularPointCloud(source_point_cloud, radius, xc, yc, zc, dist
     for i in range(len(normalized_equirect_point_cloud.points)):
         (x, y, z) = np.asarray(normalized_equirect_point_cloud.points[i], dtype=int)
         img[y-1, x-1] = (np.asarray(source_point_cloud.colors)[i] * 255).astype(np.uint8)
-    '''
-
-    '''
-    # TEST COPIL
-    # Create a dictionary to store the closest point for each (u, v) coordinate
-    closest_points = {}
-
-    # Iterate over all points in the normalized equirectangular point cloud
-    for i in range(len(uCloudNorm)):
-        u = int(uCloudNorm[i])
-        v = int(vCloudNorm[i])
-        dist = cropped_dist_from_center[i]
-        
-        # If the (u, v) coordinate is not in the dictionary or the current point is closer, update the dictionary
-        if (u, v) not in closest_points or dist < closest_points[(u, v)][1]:
-            closest_points[(u, v)] = (i, dist)
-
-    # Assign colors to the raster image using the closest points
-    for (u, v), (index, _) in closest_points.items():
-        img[v, u] = (np.asarray(source_point_cloud.colors)[index] * 255).astype(np.uint8)
     '''
 
     ''''''
@@ -302,16 +267,6 @@ def createEquirectangularPointCloud(source_point_cloud, radius, xc, yc, zc, dist
         img[v-1, u-1] = colors[index]
 
     ''''''
-
-
-    '''
-    # test inutile
-    # loop on altezza e lung
-    for i in range(height):
-        for k in range(width):
-            groda = np.where(pointcloudnorm.points == [k, i, 0])
-            color_stack[k, i] = np.asarray((pointcloudnorm.select_by_index(groda)).colors)
-    '''
     
     # Visualizza l'immagine
     plt.imshow(img)
