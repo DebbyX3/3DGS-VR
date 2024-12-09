@@ -74,8 +74,6 @@ def createSphericalPointCloud(source_point_cloud, radius, xc, yc, zc):
     # This is the final form that is written in the code below :)
     # The above steps are just for understanding
 
-    
-
     t = (radius / np.sqrt(a**2 + b**2 + c**2)) 
     
     intersecX = xc + a * t
@@ -84,21 +82,6 @@ def createSphericalPointCloud(source_point_cloud, radius, xc, yc, zc):
     
     outputpc.points = o3d.utility.Vector3dVector(np.column_stack((intersecX, intersecY, intersecZ)))
     outputpc.colors = source_point_cloud.colors
-
-    #comments to keep in mind: next, remove a point if the line magnitude is 0
-    # potrei tenermi gli indici dei punti le levo così non  faccio casino?? parlo di quando dopo uso cropped_dist_from_center per le distanze
-    '''
-    line_magnitude = np.sqrt(a**2 + b**2 + c**2)
-
-    groda = np.where(line_magnitude == 0) # the line is a point! ignore it and delete from point cloud
-    
-    t = np.divide(radius, line_magnitude, out=1, where = line_magnitude != 0)
-
-    # Remove the point with the known index
-    known_index = 0  # Replace with the actual index you want to remove
-    sourcepc.points = o3d.utility.Vector3dVector(np.delete(np.asarray(sourcepc.points), known_index, axis=0))
-    sourcepc.colors = o3d.utility.Vector3dVector(np.delete(np.asarray(sourcepc.colors), known_index, axis=0))
-    '''
 
     return outputpc
 
@@ -159,7 +142,7 @@ def createEquirectangularPointCloud(source_point_cloud, radius, xc, yc, zc, dist
     img = np.zeros((height, width, 3), dtype=np.uint8) + 255 # White background
 
     '''
-    # This works, but just 4 test let it commented
+    # This works, but just for test let it commented
     # Assign colors to the raster image (new loopless method)
     colors = (np.asarray(source_point_cloud.colors) * 255).astype(np.uint8)
     u_indices = (np.asarray(normalized_equirect_point_cloud.points)[:, 0] - 1).astype(int)
@@ -200,19 +183,49 @@ def createEquirectangularPointCloud(source_point_cloud, radius, xc, yc, zc, dist
 
     return normalized_equirect_point_cloud
 
-# Funzione per trasformare pixel in coordinate globali
-def pixel_to_global(u, v, intrinsics, extrinsics):
-    # Decomponi gli estrinseci
+# Peoject pixel in 3d using depth
+def project_pixels_with_depth(image, depth, K, extrinsics, width, height):
+    # img size
+    h_img, w_img = image.shape[:2]
+    
+    # grid with pixel coords
+    u, v = np.meshgrid(np.arange(w_img), np.arange(h_img))
+    
+    # Stack with pixel coords
+    pixel_coords = np.stack([u.ravel(), v.ravel(), np.ones_like(u.ravel())], axis=1).T  # (3, N)
+    
+    # Depth corrispondente per ogni pixel
+    # Check for 0 values
+    depth_values = depth.ravel()
+    valid_mask = depth_values > 0
+    pixel_coords = pixel_coords[:, valid_mask]
+    depth_values = depth_values[valid_mask]
+
+    # no depth check
+    #depth_values = depth.ravel()
+    
+    # Converti le coordinate dei pixel in 3D nel sistema locale della camera
+    d_local = np.linalg.inv(K) @ (pixel_coords * depth_values)  # Moltiplica con depth
+
+    # Transform to global coords using extrinsics
     R = extrinsics[:3, :3]
     t = extrinsics[:3, 3]
+    p_global = (R @ d_local) + t[:, None]  # (3, N)
 
-    # Direzione del raggio in coordinate locali (camera)
-    d = np.linalg.inv(intrinsics) @ np.array([u, v, 1])
+    # compute spherical coords
+    r = np.linalg.norm(p_global, axis=0)
+    theta = np.arctan2(p_global[2], p_global[0])
+    phi = np.arcsin(p_global[1] / r)
 
-    # Trasforma in coordinate globali
-    p_global = R @ d + t
-    return p_global
+    # map on equirectangular texture coords
+    u_texel = ((theta / (2 * np.pi)) * width).astype(np.int32) % width
+    v_texel = ((1 - (phi + np.pi / 2) / np.pi) * height).astype(np.int32)
 
+    texel_coords = np.stack([u_texel, v_texel], axis=1)  # (N, 2)
+    colors = image[v.ravel(), u.ravel()]  # Colori dei pixel
+
+
+    return texel_coords, colors, depth_values
 
 # ************************** PATHS **************************
 cameraTxt_path = '../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/cameras.txt'
@@ -380,48 +393,63 @@ with open(imagesTxt_path, 'r') as f:
 
                         # Read the image
                         img_path = os.path.join(imgs_folder, img_filename)
-                        img = np.asarray(Image.open(img_path))                        
+                        img = np.asarray(Image.open(img_path))      
+
+                        # Read the depth map
+                        depth_map_filename = img_filename + '.geometric.bin' # get the filename of the depth map
+                        depth_map_path = os.path.join(depth_map_folder, depth_map_filename)
+                        
+                        depth = read_array(depth_map_path)
 
                         # ----- IMAGE TEXTURE
                         #(image, intrinsics, extrinsics)
-                        h_img, w_img = img.shape[:2]
+                        texel_coords, colors, depth_values = project_pixels_with_depth(img, depth, intrinsic_matrix, extrinsics_matrix, width, height)
 
-                        # Create a grid of pixel coordinates
-                        u, v = np.meshgrid(np.arange(w_img), np.arange(h_img))
+                        # Add colors and metadata to texels
+                        '''
+                        # do not include depth
+                        for (u_texel, v_texel), color in zip(texel_coords, colors):
+                            texture[(u_texel, v_texel)].append({
+                                "color": color,
+                                "img_id": single_camera_info[0]
+                            })
+                        '''
 
-                        # Flatten the grid
-                        u_flat = u.flatten()
-                        v_flat = v.flatten()
-
-                        # Compute global coordinates for all pixels
-                        d = np.linalg.inv(intrinsic_matrix) @ np.vstack((u_flat, v_flat, np.ones_like(u_flat)))
-                        p_global = (rotation_matrix @ d + translation.reshape(3, 1)).T
-
-                        # Convert to spherical coordinates
-                        radius = np.linalg.norm(p_global, axis=1)
-                        theta = np.arctan2(p_global[:, 2], p_global[:, 0])
-                        phi = np.arcsin(p_global[:, 1] / radius)
-
-                        # Find corresponding texels in the texture
-                        u_texel = (theta / (2 * np.pi) * width).astype(int) % width
-                        v_texel = ((1 - (phi + np.pi / 2) / np.pi) * height).astype(int)
-
-                        # Add color and metadata to texels
-                        for i in range(len(u_texel)):
-                            texture[(u_texel[i], v_texel[i])].append({
-                                "color": img[v_flat[i], u_flat[i]],
-                                "image_id": single_camera_info[0]
+                        # include depth
+                        for (u_texel, v_texel), color, depth in zip(texel_coords, colors, depth_values):
+                            texture[(u_texel, v_texel)].append({
+                                "color": color,
+                                "depth": depth,
+                                "img_id": single_camera_info[0]
                             })
 
-# Create an empty image
-texture_img = np.zeros((height, width, 3), dtype=np.uint8)
+# Post-processing: create texture
+equirectangular_image = np.zeros((height, width, 3), dtype=np.uint8)
 
-# Fill the image with the average color of each texel
-for (u, v), texel_data in texture.items():
-    avg_color = np.mean([data["color"] for data in texel_data], axis=0).astype(np.uint8)
-    texture_img[v, u] = avg_color
+# BLENDING DI OGNI TEXEL - risultato un po' schifo
+'''
+for (u_texel, v_texel), pixel_stack in texture.items():
+    # Combina i colori (tipo media)
+    colors = np.array([p["color"] for p in pixel_stack])
+    equirectangular_image[v_texel, u_texel] = np.mean(colors, axis=0).astype(np.uint8)
+'''
 
-# Visualize the image
-plt.imshow(texture_img)
+# PRENDI SOLO IL PIù VICINO IN BASE ALLA DEPTH - depth min in base al texel
+for (u_texel, v_texel), pixel_stack in texture.items():
+    # in numpy array
+    stack_array = np.array([(p["color"], p["depth"]) for p in pixel_stack], dtype=object)
+    
+    # Extract colors and depth
+    colors = np.stack(stack_array[:, 0])  # (N, 3)
+    depths = np.array(stack_array[:, 1], dtype=np.float32)  # (N, 1)
+    
+    # Find index of pixel with min depth
+    min_index = np.argmin(depths)
+
+    # Set texel color
+    equirectangular_image[v_texel, u_texel] = colors[min_index]
+
+# View the image
+plt.imshow(equirectangular_image)
 plt.axis('off')
 plt.show()
