@@ -56,6 +56,9 @@ def project_pixels_with_depth(image, depth, K, extrinsics, width, height):
     R = extrinsics[:3, :3]
     t = extrinsics[:3, 3]
     p_global = (R @ d_local) + t[:, None]  # (3, N)
+    # p_global[0] -> X
+    # p_global[1] -> Y
+    # p_global[2] -> Z
 
     # compute spherical coords
     r = np.linalg.norm(p_global, axis=0)
@@ -67,8 +70,7 @@ def project_pixels_with_depth(image, depth, K, extrinsics, width, height):
     v_texel = ((1 - (phi + np.pi / 2) / np.pi) * height).astype(np.int32)
 
     texel_coords = np.stack([u_texel, v_texel], axis=1)  # (N, 2)
-    colors = image[v.ravel(), u.ravel()]  # Colori dei pixel
-
+    colors = image[v.ravel(), u.ravel()]
 
     return texel_coords, colors, depth_values
 
@@ -87,6 +89,11 @@ cameraTxt_path = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/spars
 imagesTxt_path = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/sparse/images.txt'
 imgs_folder = "../colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/images"
 depth_map_folder = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/stereo/depth_maps'
+
+cameraTxt_path = '../colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/cameras.txt'
+imagesTxt_path = '../colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/images.txt'
+imgs_folder = "../colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/images"
+depth_map_folder = '../colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/stereo/depth_maps'
 
 # ************************** EXTRACT INTRINSICS FROM CAMERA.TXT FILE **************************
 # Intrinsics matrix:
@@ -209,7 +216,7 @@ with open(imagesTxt_path, 'r') as f:
 
             if(count > 0):
                 if count % 2 != 0: # Read every other line (skip the second line for every image)
-                    if count % 1 == 0: # salta tot righe
+                    if count % 191 == 0: # salta tot righe
                         
                         print(count)
 
@@ -285,7 +292,7 @@ for (u_texel, v_texel), pixel_stack in texture.items():
     stack_array = np.array([(p["color"], p["depth"]) for p in pixel_stack], dtype=object)
     
     # Extract colors and depth
-    colors = np.stack(stack_array[:, 0])  # (N, 3)
+    colors = np.stack(stack_array[:, 0])  # (N, 3)       
     depths = np.array(stack_array[:, 1], dtype=np.float32)  # (N, 1)
     
     # Find index of pixel with min depth
@@ -297,4 +304,5 @@ for (u_texel, v_texel), pixel_stack in texture.items():
 # View the image
 plt.imshow(equirectangular_image)
 plt.axis('off')
+plt.subplots_adjust(left=0, bottom=0, right=1, top=1)
 plt.show()
