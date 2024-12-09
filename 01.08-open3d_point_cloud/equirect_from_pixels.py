@@ -90,10 +90,12 @@ imagesTxt_path = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/spars
 imgs_folder = "../colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/images"
 depth_map_folder = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/stereo/depth_maps'
 
+'''
 cameraTxt_path = '../colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/cameras.txt'
 imagesTxt_path = '../colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/images.txt'
 imgs_folder = "../colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/images"
 depth_map_folder = '../colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/stereo/depth_maps'
+'''
 
 # ************************** EXTRACT INTRINSICS FROM CAMERA.TXT FILE **************************
 # Intrinsics matrix:
@@ -216,7 +218,7 @@ with open(imagesTxt_path, 'r') as f:
 
             if(count > 0):
                 if count % 2 != 0: # Read every other line (skip the second line for every image)
-                    if count % 191 == 0: # salta tot righe
+                    if count % 19 == 0: # salta tot righe
                         
                         print(count)
 
