@@ -55,8 +55,12 @@ def project_pixels_with_depth(image, depth, K, extrinsics, width, height):
     # Transform to global coords using extrinsics
     R = extrinsics[:3, :3]
     t = extrinsics[:3, 3]
-    p_global = (R @ d_local) + t[:, None]  # (3, N)
-    # p_global[0] -> X
+    
+    # prova a non sommare la trasl per trovare il forward vector - forward_vector = -rotation_matrix[:, 2]
+    #p_global = (R @ d_local) + t[:, None]  # (3, N) 
+    d_global = R @ d_local
+    p_global = d_global / np.linalg.norm(d_global, axis=0) # Normalizza il vettore della direzione, poi usa d_global per calcolare theta e phi
+
     # p_global[1] -> Y
     # p_global[2] -> Z
 
@@ -218,7 +222,7 @@ with open(imagesTxt_path, 'r') as f:
 
             if(count > 0):
                 if count % 2 != 0: # Read every other line (skip the second line for every image)
-                    if count % 19 == 0: # salta tot righe
+                    if count % 3 == 0: # salta tot righe
                         
                         print(count)
 

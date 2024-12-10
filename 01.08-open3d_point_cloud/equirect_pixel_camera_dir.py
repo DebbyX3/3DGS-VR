@@ -5,6 +5,7 @@ import os
 import matplotlib
 matplotlib.use('TkAgg')
 import pylab as plt
+import math
 from collections import defaultdict
 
 '''mi pare che il codice nella mappatura pixel-> texel vada fixato semplicemente togliendo la depth. 
@@ -85,20 +86,36 @@ def forward_mapping_project_pixels(image, intrinsics, extrinsics, width, height)
 
     # Transform to global coords using extrinsics
     R = extrinsics[:3, :3]
-    t = extrinsics[:3, 3]
-    p_global = (R @ d_local)# + t[:, None]  # (3, N) # prova a non sommare la trasl per trovare il forward vector - forward_vector = -rotation_matrix[:, 2]
+
+    # prova a non sommare la trasl per trovare il forward vector - forward_vector = -rotation_matrix[:, 2]
+    # t = extrinsics[:3, 3]
+    # p_global = (R @ d_local) + t[:, None]  # (3, N) 
+    
+    d_global = R @ d_local
+    d_global = d_global / np.linalg.norm(d_global, axis=0) # Normalizza il vettore della direzione, poi usa d_global per calcolare theta e phi
+
     # p_global[0] -> X
     # p_global[1] -> Y
     # p_global[2] -> Z
 
     # compute spherical coords
-    r = np.linalg.norm(p_global, axis=0)
-    theta = np.arctan2(p_global[2], p_global[0])
-    phi = np.arcsin(p_global[1] / r)
+
+    # r diventa la normale di d_global, usata sopra
+    # d global è già stato normalizzato usando r, quindi non mi serve per calcolre phi
+    # r = np.linalg.norm(d_global, axis=0)      
+    theta = np.arctan2(d_global[2], d_global[0])
+    phi = np.arcsin(d_global[1]) # ho tolto la div per r perchè ho già normalizzato
 
     # map on equirectangular texture coords
+    # ---- TEST DI NORMALIZZAZIONE
+    # IL COD COMMENTATO è QUELLO ORIGINALE - non normalizzato
+    '''
     u_texel = ((theta / (2 * np.pi)) * width).astype(np.int32) % width
     v_texel = ((1 - (phi + np.pi / 2) / np.pi) * height).astype(np.int32)
+    '''
+    # COD NUOVO - normalizzato
+    u_texel = ((theta + np.pi) / (2 * np.pi) * width).astype(np.int32) % width
+    v_texel = ((phi + np.pi / 2) / np.pi * height).astype(np.int32)
 
     texel_coords = np.stack([u_texel, v_texel], axis=1)  # (N, 2)
     colors = image[v.ravel(), u.ravel()]
@@ -163,12 +180,10 @@ imagesTxt_path = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/spars
 imgs_folder = "../colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/images"
 depth_map_folder = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/stereo/depth_maps'
 
-'''
 cameraTxt_path = '../colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/cameras.txt'
 imagesTxt_path = '../colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/images.txt'
 imgs_folder = "../colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/images"
 depth_map_folder = '../colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/stereo/depth_maps'
-'''
 
 # ************************** EXTRACT INTRINSICS FROM CAMERA.TXT FILE **************************
 # Intrinsics matrix:
@@ -268,6 +283,7 @@ if 'k2' in locals():
 intrinsic = o3d.camera.PinholeCameraIntrinsic(width, height, intrinsic_matrix)
 
 count = 0
+count_imgs = 0
 cameras_info = []
 cameras_extrinsics = []
 
@@ -288,6 +304,12 @@ lineset = o3d.geometry.LineSet()
 all_points = []
 all_lines = []
 
+# Read 1 image every 'skip'
+# e.g. If I have 10 imgs and skip = 3, read images:
+# 3, 6, 9
+skip = 3 # if 1: do not skip imgs
+print("-- You are reading 1 image every ", skip)
+
 with open(imagesTxt_path, 'r') as f:
     for line in f:    
         # Ignore comments
@@ -296,9 +318,12 @@ with open(imagesTxt_path, 'r') as f:
 
             if(count > 0):
                 if count % 2 != 0: # Read every other line (skip the second line for every image)
-                    if count % 111 == 0: # salta tot righe
+                    count_imgs += 2
+    
+                    if count_imgs % skip == 0: # salta tot righe
                         
-                        print(count)
+                        print("--- Img num ", (count_imgs/skip)/2 if skip %2 != 0 else count_imgs/skip)
+                        print("Count: ", count)
 
                         single_camera_info = line.split() # split every field in line
                         cameras_info.append(single_camera_info) # and store them as separate fields as list in a list ( [ [] ] )
@@ -341,8 +366,7 @@ with open(imagesTxt_path, 'r') as f:
                         # Extract camera direction vector (forward vector)
                         # rotation_matrix = extrinsics_matrix[:3, :3]  # I already have the rot matrix, keep it commented
                         forward_vector = -rotation_matrix[:, 2]
-                        print(forward_vector)
-                    
+                        
                         # cerca il punto finale per fare sta linea
                         # punto di inizio è la camera stessa
                         # punto finale = punto inizio + direzione * lunghezza vettore
