@@ -7,6 +7,15 @@ matplotlib.use('TkAgg')
 import pylab as plt
 from collections import defaultdict
 
+'''mi pare che il codice nella mappatura pixel-> texel vada fixato semplicemente togliendo la depth. 
+Non devi calcolare "punti" se sulle immagini fai loop sui pixel, ti basta ricavare la direzione del 
+pixel ray, ruotarla nel riferimento globale e usare il vettore ricavato per il calcolo delle coordinate 
+sulla texture. Però penso sia il caso di implementare la procedura inversa dello pseudocodice per cui 
+occorre ricavare la funzione che dà colore e  attributo per lo z buffer dati camera e coordinata del 
+texel da riempire. Non dovrebbe essere complicato, si può fare anche in quel caso volendo il loop sui 
+file delle immagini e dentro fare il loop sui texel ricavare le coordinate immagine e se sono nel range, 
+ricavare il colore e la metrica di scelta
+naturalmente si escluderanno poi i punti "vicini"'''
 
 # Project pixel in 3d using depth
 def project_pixels_with_depth(image, depth, K, extrinsics, width, height):
@@ -203,7 +212,7 @@ with open(imagesTxt_path, 'r') as f:
 
             if(count > 0):
                 if count % 2 != 0: # Read every other line (skip the second line for every image)
-                    if count % 19 == 0: # salta tot righe
+                    if count % 1 == 0: # salta tot righe
                         
                         print(count)
 
@@ -253,7 +262,7 @@ with open(imagesTxt_path, 'r') as f:
                         # cerca il punto finale per fare sta linea
                         # punto di inizio è la camera stessa
                         # punto finale = punto inizio + direzione * lunghezza vettore
-                        final_point = camera_center + forward_vector * 2.0
+                        final_point = camera_center + forward_vector * 1.5
 
                         # ora traccio linea
                         all_points.append(camera_center)
@@ -319,8 +328,8 @@ lineset.points = o3d.utility.Vector3dVector(all_points)
 lineset.lines = o3d.utility.Vector2iVector(all_lines)
 
 # Apply color to lineset
-RED = [1.0, 0.0, 0.0]
-lines_color = [RED] * 1
+GREEN = [0.0, 1.0, 0.0]
+lines_color = [GREEN] * len(lineset.lines)
 lineset.colors = o3d.utility.Vector3dVector(lines_color)
 
 o3d.visualization.draw_geometries([lineset, cameras_point_cloud])
