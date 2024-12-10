@@ -17,7 +17,7 @@ file delle immagini e dentro fare il loop sui texel ricavare le coordinate immag
 ricavare il colore e la metrica di scelta
 naturalmente si escluderanno poi i punti "vicini"'''
 
-# Project pixel in 3d using depth
+# FORWARD MAPPING - (project from image to texture) Project pixel in 3d using depth
 def project_pixels_with_depth(image, depth, K, extrinsics, width, height):
     # img size
     h_img, w_img = image.shape[:2]
@@ -63,7 +63,8 @@ def project_pixels_with_depth(image, depth, K, extrinsics, width, height):
 
     return texel_coords, colors, depth_values
 
-def project_pixels_no_depth(image, K, extrinsics, width, height):
+# FORWARD MAPPING - (project from image to texture)
+def forward_mapping_project_pixels(image, intrinsics, extrinsics, width, height):
     # img size
     h_img, w_img = image.shape[:2]
     
@@ -74,12 +75,18 @@ def project_pixels_no_depth(image, K, extrinsics, width, height):
     pixel_coords = np.stack([u.ravel(), v.ravel(), np.ones_like(u.ravel())], axis=1).T  # (3, N)
     
     # Converti le coordinate dei pixel in 3D nel sistema locale della camera
-    d_local = np.linalg.inv(K) @ (pixel_coords)
+    '''
+    Direction Vector Calculation: The resulting d_local vector represents 
+    the direction from the camera center to the pixel in the image. 
+    This is useful for tasks such as ray tracing, where we need to know 
+    the direction of rays passing through each pixel, or for reconstructing 
+    3D scenes from multiple images.'''
+    d_local = np.linalg.inv(intrinsics) @ (pixel_coords)
 
     # Transform to global coords using extrinsics
     R = extrinsics[:3, :3]
     t = extrinsics[:3, 3]
-    p_global = (R @ d_local) + t[:, None]  # (3, N)
+    p_global = (R @ d_local)# + t[:, None]  # (3, N) # prova a non sommare la trasl per trovare il forward vector - forward_vector = -rotation_matrix[:, 2]
     # p_global[0] -> X
     # p_global[1] -> Y
     # p_global[2] -> Z
@@ -98,7 +105,11 @@ def project_pixels_no_depth(image, K, extrinsics, width, height):
 
     return texel_coords, colors
 
+# INVERSE MAPPING (from texture to image)
+
+
 '''
+QUESTA DOVREBBE ESSERE GIA FATTA (FORWARD MAPPING)
 Questa sotto in realtà c’è già fixando il codice togliendo la depth, e già ricavata per ogni pixel non solo per l’asse.  
 Mapping function prototype: 
  
@@ -116,12 +127,25 @@ float {u, v} Dir2UV(vector3 camera_direction)
  } 
 
 This function should take a certain camera (e.g. cam1) direction in input and return the u,v coordinates of the texture. 
-A test could be to just use the central image pixel for each cam and see where it ends on the final texture to have a rough idea if this step is working. '''
+A test could be to just use the central image pixel for each cam and see where it ends on the final texture to have a 
+rough idea if this step is working. 
 
-def project_ariel_test(camera_direction):
+def project_ariel_test(camera_direction, width, height):
+    #camera_direction = camera_direction - np.min(camera_direction)
+    #normalized_camera_direction = camera_direction / np.max(camera_direction)
+    #normalized_camera_direction = camera_direction / np.linalg.norm(camera_direction)
     normalized_camera_direction = camera_direction / np.sqrt(np.sum(camera_direction**2))
     print("original: ", camera_direction)
     print("norm: ", normalized_camera_direction)
+
+    theta = np.arctan2(normalized_camera_direction[2], normalized_camera_direction[0])
+    phi = np.arcsin(normalized_camera_direction[1])
+
+    u = ((theta / (2 * np.pi + 0.5)) * width).astype(np.int32) % width
+    v = ((phi / (np.pi + 0.5)) * height).astype(np.int32)
+
+    return (u, v)
+'''
 
 # ************************** PATHS **************************
 cameraTxt_path = '../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/cameras.txt'
@@ -272,7 +296,7 @@ with open(imagesTxt_path, 'r') as f:
 
             if(count > 0):
                 if count % 2 != 0: # Read every other line (skip the second line for every image)
-                    if count % 27 == 0: # salta tot righe
+                    if count % 111 == 0: # salta tot righe
                         
                         print(count)
 
@@ -332,9 +356,15 @@ with open(imagesTxt_path, 'r') as f:
                         idx = len(all_points)
                         all_lines.append([idx - 2, idx - 1])  # Indici degli ultimi due punti
 
+                        '''
                         # TEST NUOVE FUNZIONI
 
-                        project_ariel_test(forward_vector)
+                        texel_coords = project_ariel_test(forward_vector, width, height)
+   
+                        texture[(texel_coords[0], texel_coords[1])].append({
+                            "color": [255,0,0],
+                            "img_id": single_camera_info[0]
+                        })
 
                         '''
                         # Take the image file name
@@ -347,7 +377,7 @@ with open(imagesTxt_path, 'r') as f:
                         
                         # ----- IMAGE TEXTURE
                         #(image, intrinsics, extrinsics)
-                        texel_coords, colors = project_pixels_no_depth(img, intrinsic_matrix, extrinsics_matrix, width, height)
+                        texel_coords, colors = forward_mapping_project_pixels(img, intrinsic_matrix, extrinsics_matrix, width, height)
 
                         # Add colors and metadata to texels
                         # do not include depth
@@ -356,17 +386,23 @@ with open(imagesTxt_path, 'r') as f:
                                 "color": color,
                                 "img_id": single_camera_info[0]
                             })
-                        '''
+                        
                         
 
 # Post-processing: create texture
 equirectangular_image = np.zeros((height, width, 3), dtype=np.uint8)
+
+'''
+for (u_texel, v_texel), pixel_stack in texture.items():
+    equirectangular_image[v_texel, u_texel] = [255,255,255]
+'''
 
 # BLENDING DI OGNI TEXEL - risultato un po' schifo
 for (u_texel, v_texel), pixel_stack in texture.items():
     # Combina i colori (tipo media)
     colors = np.array([p["color"] for p in pixel_stack])
     equirectangular_image[v_texel, u_texel] = np.mean(colors, axis=0).astype(np.uint8)
+
 
 # View the image
 plt.imshow(equirectangular_image)
