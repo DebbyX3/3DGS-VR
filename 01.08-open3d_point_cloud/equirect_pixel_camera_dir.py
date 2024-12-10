@@ -63,6 +63,66 @@ def project_pixels_with_depth(image, depth, K, extrinsics, width, height):
 
     return texel_coords, colors, depth_values
 
+def project_pixels_no_depth(image, K, extrinsics, width, height):
+    # img size
+    h_img, w_img = image.shape[:2]
+    
+    # grid with pixel coords
+    u, v = np.meshgrid(np.arange(w_img), np.arange(h_img))
+    
+    # Stack with pixel coords
+    pixel_coords = np.stack([u.ravel(), v.ravel(), np.ones_like(u.ravel())], axis=1).T  # (3, N)
+    
+    # Converti le coordinate dei pixel in 3D nel sistema locale della camera
+    d_local = np.linalg.inv(K) @ (pixel_coords)
+
+    # Transform to global coords using extrinsics
+    R = extrinsics[:3, :3]
+    t = extrinsics[:3, 3]
+    p_global = (R @ d_local) + t[:, None]  # (3, N)
+    # p_global[0] -> X
+    # p_global[1] -> Y
+    # p_global[2] -> Z
+
+    # compute spherical coords
+    r = np.linalg.norm(p_global, axis=0)
+    theta = np.arctan2(p_global[2], p_global[0])
+    phi = np.arcsin(p_global[1] / r)
+
+    # map on equirectangular texture coords
+    u_texel = ((theta / (2 * np.pi)) * width).astype(np.int32) % width
+    v_texel = ((1 - (phi + np.pi / 2) / np.pi) * height).astype(np.int32)
+
+    texel_coords = np.stack([u_texel, v_texel], axis=1)  # (N, 2)
+    colors = image[v.ravel(), u.ravel()]
+
+    return texel_coords, colors
+
+'''
+Questa sotto in realtà c’è già fixando il codice togliendo la depth, e già ricavata per ogni pixel non solo per l’asse.  
+Mapping function prototype: 
+ 
+float {u, v} Dir2UV(vector3 camera_direction)  
+{ 
+	vector3 norm_direction = normalize(camera_direction) 
+
+    float theta = arctan(norm_direction.z, norm_direction.x) 
+	float phi = arcsin(norm_direction.y) 
+ 
+	float u = theta/ (2PI+ 0.5) 
+	float v = phi/ (PI+ 0.5) 
+ 
+	return {u, v} 
+ } 
+
+This function should take a certain camera (e.g. cam1) direction in input and return the u,v coordinates of the texture. 
+A test could be to just use the central image pixel for each cam and see where it ends on the final texture to have a rough idea if this step is working. '''
+
+def project_ariel_test(camera_direction):
+    normalized_camera_direction = camera_direction / np.sqrt(np.sum(camera_direction**2))
+    print("original: ", camera_direction)
+    print("norm: ", normalized_camera_direction)
+
 # ************************** PATHS **************************
 cameraTxt_path = '../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/cameras.txt'
 imagesTxt_path = '../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/images.txt'
@@ -212,7 +272,7 @@ with open(imagesTxt_path, 'r') as f:
 
             if(count > 0):
                 if count % 2 != 0: # Read every other line (skip the second line for every image)
-                    if count % 1 == 0: # salta tot righe
+                    if count % 27 == 0: # salta tot righe
                         
                         print(count)
 
@@ -252,8 +312,8 @@ with open(imagesTxt_path, 'r') as f:
                         
                         cameras_coords.append(camera_center)
 
-                        ''' mio test'''
-                        
+                        # ------------ FIND CAMERA DIRECTION AND PREPARE TO DRAW IT AS A VECTOR IN 3D SPACE 
+
                         # Extract camera direction vector (forward vector)
                         # rotation_matrix = extrinsics_matrix[:3, :3]  # I already have the rot matrix, keep it commented
                         forward_vector = -rotation_matrix[:, 2]
@@ -272,10 +332,11 @@ with open(imagesTxt_path, 'r') as f:
                         idx = len(all_points)
                         all_lines.append([idx - 2, idx - 1])  # Indici degli ultimi due punti
 
+                        # TEST NUOVE FUNZIONI
 
-                        ''' fine mio test'''
+                        project_ariel_test(forward_vector)
 
-
+                        '''
                         # Take the image file name
                         img_filename = single_camera_info[9]
 
@@ -283,40 +344,38 @@ with open(imagesTxt_path, 'r') as f:
                         img_path = os.path.join(imgs_folder, img_filename)
                         img = np.asarray(Image.open(img_path))   
 
+                        
+                        # ----- IMAGE TEXTURE
+                        #(image, intrinsics, extrinsics)
+                        texel_coords, colors = project_pixels_no_depth(img, intrinsic_matrix, extrinsics_matrix, width, height)
+
+                        # Add colors and metadata to texels
+                        # do not include depth
+                        for (u_texel, v_texel), color in zip(texel_coords, colors):
+                            texture[(u_texel, v_texel)].append({
+                                "color": color,
+                                "img_id": single_camera_info[0]
+                            })
+                        '''
+                        
+
 # Post-processing: create texture
 equirectangular_image = np.zeros((height, width, 3), dtype=np.uint8)
 
 # BLENDING DI OGNI TEXEL - risultato un po' schifo
-'''
 for (u_texel, v_texel), pixel_stack in texture.items():
     # Combina i colori (tipo media)
     colors = np.array([p["color"] for p in pixel_stack])
     equirectangular_image[v_texel, u_texel] = np.mean(colors, axis=0).astype(np.uint8)
-'''
 
-# PRENDI SOLO IL PIù VICINO IN BASE ALLA DEPTH - depth min in base al texel
-for (u_texel, v_texel), pixel_stack in texture.items():
-    # in numpy array
-    stack_array = np.array([(p["color"], p["depth"]) for p in pixel_stack], dtype=object)
-    
-    # Extract colors and depth
-    colors = np.stack(stack_array[:, 0])  # (N, 3)       
-    depths = np.array(stack_array[:, 1], dtype=np.float32)  # (N, 1)
-    
-    # Find index of pixel with min depth
-    min_index = np.argmin(depths)
-
-    # Set texel color
-    equirectangular_image[v_texel, u_texel] = colors[min_index]
-
-'''
 # View the image
 plt.imshow(equirectangular_image)
 plt.axis('off')
 plt.subplots_adjust(left=0, bottom=0, right=1, top=1)
 plt.show()
-'''
 
+
+# ------- SHOW CAMERAS IN 3D (RED) + FORWARD VECTOR (GREEN)
 # Create new point cloud, add camera centers
 cameras_point_cloud = o3d.geometry.PointCloud()
 cameras_point_cloud.points = o3d.utility.Vector3dVector(cameras_coords)
