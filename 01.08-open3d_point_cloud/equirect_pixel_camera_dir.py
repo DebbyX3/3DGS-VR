@@ -122,48 +122,37 @@ def forward_mapping_project_pixels(image, intrinsics, extrinsics, width, height)
 
     return texel_coords, colors
 
-# INVERSE MAPPING (from texture to image)
-
-
+# INVERSE MAPPING (from texture/texel to image)
 '''
-QUESTA DOVREBBE ESSERE GIA FATTA (FORWARD MAPPING)
-Questa sotto in realtà c’è già fixando il codice togliendo la depth, e già ricavata per ogni pixel non solo per l’asse.  
-Mapping function prototype: 
- 
-float {u, v} Dir2UV(vector3 camera_direction)  
-{ 
-	vector3 norm_direction = normalize(camera_direction) 
+1	For each texel (u, v) in the texture:
+    - Compute the direction (θ,ϕ) in the global reference system
+    - Transform the direction in the camera reference system to determine the intersection point with the image plane (using extrinsics)
+2	Project the point on the image plane by using the intrinsics and check if it falls INSIDE the image frame/limit
+3	If true, compute the color and update the texel
 
-    float theta = arctan(norm_direction.z, norm_direction.x) 
-	float phi = arcsin(norm_direction.y) 
- 
-	float u = theta/ (2PI+ 0.5) 
-	float v = phi/ (PI+ 0.5) 
- 
-	return {u, v} 
- } 
-
-This function should take a certain camera (e.g. cam1) direction in input and return the u,v coordinates of the texture. 
-A test could be to just use the central image pixel for each cam and see where it ends on the final texture to have a 
-rough idea if this step is working. 
-
-def project_ariel_test(camera_direction, width, height):
-    #camera_direction = camera_direction - np.min(camera_direction)
-    #normalized_camera_direction = camera_direction / np.max(camera_direction)
-    #normalized_camera_direction = camera_direction / np.linalg.norm(camera_direction)
-    normalized_camera_direction = camera_direction / np.sqrt(np.sum(camera_direction**2))
-    print("original: ", camera_direction)
-    print("norm: ", normalized_camera_direction)
-
-    theta = np.arctan2(normalized_camera_direction[2], normalized_camera_direction[0])
-    phi = np.arcsin(normalized_camera_direction[1])
-
-    u = ((theta / (2 * np.pi + 0.5)) * width).astype(np.int32) % width
-    v = ((phi / (np.pi + 0.5)) * height).astype(np.int32)
-
-    return (u, v)
+For better understanding:
+proiezione inversa (wglobal→wlocal→(u,v)):
+- trasformo da w_global a w_local
+- coordinate immagine (u,v)
+- mapping da texel a direzione globale (θ,ϕ)
 '''
+def inverse_mapping_compute_global_directions(width, height):
+    # Compute global directions for each texel of the texture
+    
+    u, v = np.meshgrid(np.arange(width), np.arange(height))
+    theta = (u / width) * 2 * np.pi - np.pi
+    phi = (v / height) * np.pi - np.pi / 2
 
+    # global directions vector (shape: (height, width, 3))
+    # theh 3 arrays are combined into a single array where each element is a vector of 3 components
+    w_global = np.stack([
+        np.cos(phi) * np.cos(theta),
+        np.sin(phi),
+        np.cos(phi) * np.sin(theta)
+    ], axis=-1) # -1: take the last axis
+
+    return w_global   
+ 
 # ************************** PATHS **************************
 cameraTxt_path = '../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/cameras.txt'
 imagesTxt_path = '../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/images.txt'
@@ -180,10 +169,12 @@ imagesTxt_path = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/spars
 imgs_folder = "../colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/images"
 depth_map_folder = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/stereo/depth_maps'
 
+'''
 cameraTxt_path = '../colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/cameras.txt'
 imagesTxt_path = '../colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/images.txt'
 imgs_folder = "../colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/images"
 depth_map_folder = '../colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/stereo/depth_maps'
+'''
 
 # ************************** EXTRACT INTRINSICS FROM CAMERA.TXT FILE **************************
 # Intrinsics matrix:
@@ -279,15 +270,8 @@ if 'k1' in locals():
 if 'k2' in locals():
     print(" k2: ", k2)
 
-#intrinsic = o3d.camera.PinholeCameraIntrinsic(width, height, fx, fy, cx, cy) #alternatively
-intrinsic = o3d.camera.PinholeCameraIntrinsic(width, height, intrinsic_matrix)
-
-count = 0
-count_imgs = 0
-cameras_info = []
-cameras_extrinsics = []
-
-point_cloud = o3d.geometry.PointCloud()
+#intrinsics = o3d.camera.PinholeCameraIntrinsic(width, height, fx, fy, cx, cy) #alternatively
+intrinsics = o3d.camera.PinholeCameraIntrinsic(width, height, intrinsic_matrix)
 
 # ************************** EXTRACT EXTRINSICS FROM IMAGES.TXT FILE **************************
 # Extrinsic matrix:
@@ -296,18 +280,35 @@ point_cloud = o3d.geometry.PointCloud()
 # [r3.1, r3.2, r3.3, tz]
 # [0,    0,    0,    1 ]
 
-width, height = 2048, 1024
-texture = defaultdict(list)
-cameras_coords = []
-
+# LINESET to draw camera directions in 3d as 'vectors'
 lineset = o3d.geometry.LineSet()
 all_points = []
 all_lines = []
+cameras_coords = []
 
+# COMMON
+width, height = 2048, 1024
+
+# FORWARD MAPPING - comment if using inverse map.
+'''
+texture = defaultdict(list)
+'''
+
+# INVERSE MAPPING - comment if using forward map.
+# Pre-compute global directions for each texel
+w_global = inverse_mapping_compute_global_directions(width, height) # (height, width, 3)
+z_buffer = np.full((height, width), np.inf)
+texture = np.zeros((height, width, 3), dtype=np.uint8)
+
+# LOOP INFO
+count = 0
+count_imgs = 0
+cameras_info = []
+cameras_extrinsics = []
 # Read 1 image every 'skip'
 # e.g. If I have 10 imgs and skip = 3, read images:
 # 3, 6, 9
-skip = 3 # if 1: do not skip imgs
+skip = 6 # if 1: do not skip imgs
 print("-- You are reading 1 image every ", skip)
 
 with open(imagesTxt_path, 'r') as f:
@@ -380,17 +381,6 @@ with open(imagesTxt_path, 'r') as f:
                         idx = len(all_points)
                         all_lines.append([idx - 2, idx - 1])  # Indici degli ultimi due punti
 
-                        '''
-                        # TEST NUOVE FUNZIONI
-
-                        texel_coords = project_ariel_test(forward_vector, width, height)
-   
-                        texture[(texel_coords[0], texel_coords[1])].append({
-                            "color": [255,0,0],
-                            "img_id": single_camera_info[0]
-                        })
-
-                        '''
                         # Take the image file name
                         img_filename = single_camera_info[9]
 
@@ -399,7 +389,8 @@ with open(imagesTxt_path, 'r') as f:
                         img = np.asarray(Image.open(img_path))   
 
                         
-                        # ----- IMAGE TEXTURE
+                        # ----- IMAGE TEXTURE FORWARD
+                        '''
                         #(image, intrinsics, extrinsics)
                         texel_coords, colors = forward_mapping_project_pixels(img, intrinsic_matrix, extrinsics_matrix, width, height)
 
@@ -410,23 +401,84 @@ with open(imagesTxt_path, 'r') as f:
                                 "color": color,
                                 "img_id": single_camera_info[0]
                             })
+                        '''
+
+                        # ----- IMAGE TEXTURE INVERSE
+                        # Trasforma w_global nel sistema della telecamera
+                        '''
+                        Qui il calcolo trasforma 
+                        w_global(direzione globale) nel sistema di coordinate della telecamera (locale), utilizzando:
+                        La matrice di rotazione 
+                        - R^T  (trasposta della matrice di rotazione della telecamera).
+                        - La traslazione t della telecamera.
+                        '''
+                        #w_local = np.einsum('ij,hwj->hwi', rotation_matrix.T, w_global - translation)  # (height, width, 3)
+                        translation_offset = w_global - translation.reshape(1, 1, 3)  # Sottrai la traslazione
+                        w_local = np.tensordot(translation_offset, rotation_matrix.T, axes=([2], [0]))  # Applica R^T
+
+                        # Proietta sul piano immagine
+                        #d_local = np.einsum('ij,hwj->hwi', intrinsic_matrix, w_local)  # (height, width, 3)
+                        d_local = np.matmul(w_local, intrinsic_matrix.T) # dlocal = intrinsics ⋅ wlocal
+
+                        # dovrebbero usire val pos non troppo piccoli
+                        print("Min depth:", d_local[..., 2].min())
+                        print("Max depth:", d_local[..., 2].max())
+
+                        print("d_local example:", d_local[0, 0]) # verifica 3 punto sia pos per val validi
                         
+                        valid_mask = d_local[..., 2] > 0  # Solo punti davanti alla telecamera
+
+                        u_image = (d_local[..., 0] / d_local[..., 2]).astype(int)
+                        v_image = (d_local[..., 1] / d_local[..., 2]).astype(int)
+                        #test (2 righe)
+                        u_image[valid_mask] = (d_local[valid_mask, 0] / d_local[valid_mask, 2]).astype(int)
+                        v_image[valid_mask] = (d_local[valid_mask, 1] / d_local[valid_mask, 2]).astype(int)
+
+                        print("u_image range:", u_image.min(), u_image.max())
+                        print("v_image range:", v_image.min(), v_image.max())
+
+                        #(count_imgs/skip)/2 if skip %2 != 0 else count_imgs/skip
+                        
+                        print("Rotation matrix (R):\n", rotation_matrix)
+                        print("Is R a valid rotation matrix?", "True" if np.allclose(np.dot(rotation_matrix.T, rotation_matrix), np.eye(3)) == True else "NOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO" )
+                        print("Translation vector (t):\n", translation)
+
+
+                        # Calcola le profondità
+                        distances = np.linalg.norm(w_global - translation, axis=-1)
+
+                        # Applica il criterio di z-buffering
+                        mask = (
+                            (u_image >= 0) & (u_image < img.shape[1]) &
+                            (v_image >= 0) & (v_image < img.shape[0]) &
+                            valid_mask
+                        )
+
+                        # Aggiorna z-buffer e texture
+                        u_image, v_image = u_image[mask], v_image[mask]
+                        texel_coords = np.argwhere(mask)
+
+                        for texel, u, v in zip(texel_coords, u_image, v_image):
+                            y_texel, x_texel = texel
+                            if distances[y_texel, x_texel] < z_buffer[y_texel, x_texel]:
+                                z_buffer[y_texel, x_texel] = distances[y_texel, x_texel]
+                                texture[y_texel, x_texel] = img[v, u]
                         
 
-# Post-processing: create texture
+# ********* Post-processing: create texture
+
+# FORWARD MAPPING - comment if using inverse map.
+'''
 equirectangular_image = np.zeros((height, width, 3), dtype=np.uint8)
-
-'''
-for (u_texel, v_texel), pixel_stack in texture.items():
-    equirectangular_image[v_texel, u_texel] = [255,255,255]
-'''
-
 # BLENDING DI OGNI TEXEL - risultato un po' schifo
 for (u_texel, v_texel), pixel_stack in texture.items():
     # Combina i colori (tipo media)
     colors = np.array([p["color"] for p in pixel_stack])
     equirectangular_image[v_texel, u_texel] = np.mean(colors, axis=0).astype(np.uint8)
+'''
 
+# INVERSE MAPPING - comment if using forward map.
+equirectangular_image = texture
 
 # View the image
 plt.imshow(equirectangular_image)
