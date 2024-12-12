@@ -135,14 +135,40 @@ proiezione inversa (wglobal→wlocal→(u,v)):
 - trasformo da w_global a w_local
 - coordinate immagine (u,v)
 - mapping da texel a direzione globale (θ,ϕ)
-'''
-def inverse_mapping_compute_global_directions(width, height):
-    # Compute global directions for each texel of the texture
-    
-    u, v = np.meshgrid(np.arange(width), np.arange(height))
-    theta = (u / width) * 2 * np.pi - np.pi
-    phi = (v / height) * np.pi - np.pi / 2
 
+1- from texel coords (utexel, vtexel) -> to global dir
+    Each texel of the equirect texture represents a direction (theta, phi)
+    theta = (u / width) * 2 * pi - pi
+    phi = (v / height) * pi - pi / 2
+
+2 - from global dir (theta, phi) -> to image coords (u_image, v_image)
+    global direction w_global is computed from (theta, phi):
+    w_global = [cos(phi) * cos (theta)
+                sin(phi)
+                cos(phi) * sin(theta)]
+    Then, w_global is transfomed in local direction w_local with:
+    w_local = R^T * (w_global - t)     
+
+3 - project on image plane
+    local direction d_local is projected on the image plane using the camera intrinsics:
+    d_local = intrinsics * w_local       
+    
+4 - Normalize d_local to obtain image coords (u_image, v_image)
+    check if the projected point is inside the image frame
+    u_image = d_local[0] / d_local[2]
+    v_image = d_local[1] / d_local[2]
+'''
+def inverse_mapping(width, height, extrinsics, intrinsics, image, image_width, image_height):
+    print("img width, img height",image_width, image_height)
+    
+    # 1. Griglia di texel (u_texel, v_texel)
+    u_texel, v_texel = np.meshgrid(np.arange(width), np.arange(height))
+
+    # 2. Calcolo di (theta, phi) per ogni texel
+    theta = (u_texel / width) * 2 * np.pi - np.pi
+    phi = (v_texel / height) * np.pi - np.pi / 2
+
+    # 3. Direzione globale w_global
     # global directions vector (shape: (height, width, 3))
     # theh 3 arrays are combined into a single array where each element is a vector of 3 components
     w_global = np.stack([
@@ -151,7 +177,44 @@ def inverse_mapping_compute_global_directions(width, height):
         np.cos(phi) * np.sin(theta)
     ], axis=-1) # -1: take the last axis
 
-    return w_global   
+    # 4. Trasformazione in direzione locale w_local
+    '''
+    Qui il calcolo trasforma 
+    w_global(direzione globale) nel sistema di coordinate della telecamera (locale), utilizzando:
+    La matrice di rotazione 
+    - R^T  (trasposta della matrice di rotazione della telecamera).
+    - La traslazione t della telecamera.
+    w_local = R^T * (w_global - t)
+    '''
+    R = extrinsics[:3, :3]
+    t = extrinsics[:3, 3].reshape(1, 1, 3)
+    w_local = np.einsum('ij,hwj->hwi', R.T, w_global - t)  # Shape: (height, width, 3)
+
+    # 5. Proiezione su piano immagine
+    d_local = np.einsum('ij,hwj->hwi', intrinsics, w_local)  # Shape: (height, width, 3)
+
+    # 6. Maschera di validità
+    valid_mask = d_local[..., 2] > 0  # Solo punti davanti alla telecamera
+
+    # 7. Calcolo di u_image e v_image
+    u_image = np.full((height, width), -1, dtype=np.int32)
+    v_image = np.full((height, width), -1, dtype=np.int32)
+
+    u_image[valid_mask] = (d_local[valid_mask, 0] / d_local[valid_mask, 2]).astype(int)
+    v_image[valid_mask] = (d_local[valid_mask, 1] / d_local[valid_mask, 2]).astype(int)
+
+    # 8. Clipping ai bordi dell'immagine
+    u_image = np.clip(u_image, 0, image_width - 1)
+    v_image = np.clip(v_image, 0, image_height - 1)
+
+    # 9. Calcolo della distanza per il criterio del z-buffer
+    distances = np.linalg.norm(w_global - t, axis=-1)
+
+    # 10. Colori della texture proiettati
+    colors = np.zeros((height, width, 3), dtype=np.uint8)
+    colors[valid_mask] = image[v_image[valid_mask], u_image[valid_mask]]
+
+    return colors, distances, valid_mask   
  
 # ************************** PATHS **************************
 cameraTxt_path = '../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/cameras.txt'
@@ -294,11 +357,10 @@ width, height = 2048, 1024
 texture = defaultdict(list)
 '''
 
-# INVERSE MAPPING - comment if using forward map.
-# Pre-compute global directions for each texel
-w_global = inverse_mapping_compute_global_directions(width, height) # (height, width, 3)
-z_buffer = np.full((height, width), np.inf)
+# INVERSE MAPPING - comment if using forward map
 texture = np.zeros((height, width, 3), dtype=np.uint8)
+z_buffer = np.full((height, width), np.inf)
+z_buffer_inverse = np.full((height, width), -np.inf)
 
 # LOOP INFO
 count = 0
@@ -403,50 +465,16 @@ with open(imagesTxt_path, 'r') as f:
                             })
                         '''
 
+                        # Find image height and width separately
+
                         # ----- IMAGE TEXTURE INVERSE
-                        # Trasforma w_global nel sistema della telecamera
-                        '''
-                        Qui il calcolo trasforma 
-                        w_global(direzione globale) nel sistema di coordinate della telecamera (locale), utilizzando:
-                        La matrice di rotazione 
-                        - R^T  (trasposta della matrice di rotazione della telecamera).
-                        - La traslazione t della telecamera.
-                        '''
-                        #w_local = np.einsum('ij,hwj->hwi', rotation_matrix.T, w_global - translation)  # (height, width, 3)
-                        translation_offset = w_global - translation.reshape(1, 1, 3)  # Sottrai la traslazione
-                        w_local = np.tensordot(translation_offset, rotation_matrix.T, axes=([2], [0]))  # Applica R^T
-
-                        # Proietta sul piano immagine
-                        #d_local = np.einsum('ij,hwj->hwi', intrinsic_matrix, w_local)  # (height, width, 3)
-                        d_local = np.matmul(w_local, intrinsic_matrix.T) # dlocal = intrinsics ⋅ wlocal
-
-                        # dovrebbero usire val pos non troppo piccoli
-                        print("Min depth:", d_local[..., 2].min())
-                        print("Max depth:", d_local[..., 2].max())
-
-                        print("d_local example:", d_local[0, 0]) # verifica 3 punto sia pos per val validi
+                        colors, distances, valid_mask = inverse_mapping(
+                                                        width, height,
+                                                        extrinsics_matrix, intrinsic_matrix, img,
+                                                        image_width = img.shape[1], image_height = img.shape[0]
+                                                    )
                         
-                        valid_mask = d_local[..., 2] > 0  # Solo punti davanti alla telecamera
-
-                        u_image = (d_local[..., 0] / d_local[..., 2]).astype(int)
-                        v_image = (d_local[..., 1] / d_local[..., 2]).astype(int)
-                        #test (2 righe)
-                        u_image[valid_mask] = (d_local[valid_mask, 0] / d_local[valid_mask, 2]).astype(int)
-                        v_image[valid_mask] = (d_local[valid_mask, 1] / d_local[valid_mask, 2]).astype(int)
-
-                        print("u_image range:", u_image.min(), u_image.max())
-                        print("v_image range:", v_image.min(), v_image.max())
-
-                        #(count_imgs/skip)/2 if skip %2 != 0 else count_imgs/skip
-                        
-                        print("Rotation matrix (R):\n", rotation_matrix)
-                        print("Is R a valid rotation matrix?", "True" if np.allclose(np.dot(rotation_matrix.T, rotation_matrix), np.eye(3)) == True else "NOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO" )
-                        print("Translation vector (t):\n", translation)
-
-
-                        # Calcola le profondità
-                        distances = np.linalg.norm(w_global - translation, axis=-1)
-
+                        ''' commenta per testare il codice sotto
                         # Applica il criterio di z-buffering
                         mask = (
                             (u_image >= 0) & (u_image < img.shape[1]) &
@@ -463,6 +491,19 @@ with open(imagesTxt_path, 'r') as f:
                             if distances[y_texel, x_texel] < z_buffer[y_texel, x_texel]:
                                 z_buffer[y_texel, x_texel] = distances[y_texel, x_texel]
                                 texture[y_texel, x_texel] = img[v, u]
+                        '''
+                        # Aggiorna la texture e il buffer di profondità
+                        ''' 
+                        # zbuffer che tiene solo valori + vicini
+                        closer_mask = valid_mask & (distances < z_buffer)
+                        z_buffer[closer_mask] = distances[closer_mask]
+                        texture[closer_mask] = colors[closer_mask]
+                        '''
+
+                        #zbuffer che tiene valori + lontani
+                        farther_mask = valid_mask & (distances > z_buffer_inverse)
+                        z_buffer_inverse[farther_mask] = distances[farther_mask]
+                        texture[farther_mask] = colors[farther_mask]
                         
 
 # ********* Post-processing: create texture
