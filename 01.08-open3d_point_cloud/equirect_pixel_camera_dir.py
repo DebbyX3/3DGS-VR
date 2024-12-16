@@ -161,14 +161,14 @@ proiezione inversa (wglobal→wlocal→(u,v)):
 def inverse_mapping(width, height, extrinsics, intrinsics, image, image_width, image_height):
     print("img width, img height",image_width, image_height)
     
-    # 1. Griglia di texel (u_texel, v_texel)
+    # griglia di texel (u_texel, v_texel)
     u_texel, v_texel = np.meshgrid(np.arange(width), np.arange(height))
 
-    # 2. Calcolo di (theta, phi) per ogni texel
+    # calcolo di (theta, phi) per ogni texel
     theta = (u_texel / width) * 2 * np.pi - np.pi
     phi = (v_texel / height) * np.pi - np.pi / 2
 
-    # 3. Direzione globale w_global
+    # direzione globale w_global
     # global directions vector (shape: (height, width, 3))
     # theh 3 arrays are combined into a single array where each element is a vector of 3 components
     w_global = np.stack([
@@ -177,44 +177,61 @@ def inverse_mapping(width, height, extrinsics, intrinsics, image, image_width, i
         np.cos(phi) * np.sin(theta)
     ], axis=-1) # -1: take the last axis
 
-    # 4. Trasformazione in direzione locale w_local
+    # trasformazione in direzione locale w_local
     '''
     Qui il calcolo trasforma 
     w_global(direzione globale) nel sistema di coordinate della telecamera (locale), utilizzando:
     La matrice di rotazione 
     - R^T  (trasposta della matrice di rotazione della telecamera).
-    - La traslazione t della telecamera.
-    w_local = R^T * (w_global - t)
+    w_local = R^T * (w_global)
+    La trasf è senza rotazione perchè stiamo considerando punti all'infinito! -> la dir globale w_global è semplicemente ruotata nel sist di rif locale della telecamera
+
     '''
     R = extrinsics[:3, :3]
-    t = extrinsics[:3, 3].reshape(1, 1, 3)
-    w_local = np.einsum('ij,hwj->hwi', R.T, w_global - t)  # Shape: (height, width, 3)
+    w_local = np.einsum('ij,hwj->hwi', R.T, w_global)  # (height, width, 3)
 
-    # 5. Proiezione su piano immagine
-    d_local = np.einsum('ij,hwj->hwi', intrinsics, w_local)  # Shape: (height, width, 3)
+    # proiezione su piano immagine
+    d_local = np.einsum('ij,hwj->hwi', intrinsics, w_local)  # (height, width, 3)
 
-    # 6. Maschera di validità
-    valid_mask = d_local[..., 2] > 0  # Solo punti davanti alla telecamera
+    # maschera di validità
+    valid_mask = d_local[..., 2] > 0  # solo punti davanti alla telecamera
 
-    # 7. Calcolo di u_image e v_image
+    # calcolo di u_image e v_image
     u_image = np.full((height, width), -1, dtype=np.int32)
     v_image = np.full((height, width), -1, dtype=np.int32)
 
     u_image[valid_mask] = (d_local[valid_mask, 0] / d_local[valid_mask, 2]).astype(int)
     v_image[valid_mask] = (d_local[valid_mask, 1] / d_local[valid_mask, 2]).astype(int)
 
-    # 8. Clipping ai bordi dell'immagine
-    u_image = np.clip(u_image, 0, image_width - 1)
-    v_image = np.clip(v_image, 0, image_height - 1)
+    print(np.shape(u_image), np.shape(v_image))
 
-    # 9. Calcolo della distanza per il criterio del z-buffer
-    distances = np.linalg.norm(w_global - t, axis=-1)
+    # escludi punti fuori dai bordi - no clipping
+    valid_mask &= (u_image >= 0) & (u_image < image_width)
+    valid_mask &= (v_image >= 0) & (v_image < image_height)
 
-    # 10. Colori della texture proiettati
+    # se attivo zbuffer
+    
+    # calcolo della distanza per il criterio del z-buffer
+    distances = np.linalg.norm(w_global, axis=-1)
+
+    # colori della texture proiettati
     colors = np.zeros((height, width, 3), dtype=np.uint8)
     colors[valid_mask] = image[v_image[valid_mask], u_image[valid_mask]]
+    return colors, distances, valid_mask
+    
 
-    return colors, distances, valid_mask   
+    '''
+    # se attivo blending
+    # blending
+    colors = np.zeros((height, width, 3), dtype=np.uint8)
+    for u, v in zip(u_image[valid_mask], v_image[valid_mask]):
+        if colors[v, u].sum() == 0:  # Non c'è ancora alcun contributo in questo texel
+            colors[v, u] = image[v, u]
+        else:
+            colors[v, u] = (colors[v, u] + image[v, u]) / 2
+    
+    return colors, valid_mask   
+    '''
  
 # ************************** PATHS **************************
 cameraTxt_path = '../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/cameras.txt'
@@ -370,7 +387,7 @@ cameras_extrinsics = []
 # Read 1 image every 'skip'
 # e.g. If I have 10 imgs and skip = 3, read images:
 # 3, 6, 9
-skip = 6 # if 1: do not skip imgs
+skip = 80 # if 1: do not skip imgs
 print("-- You are reading 1 image every ", skip)
 
 with open(imagesTxt_path, 'r') as f:
@@ -468,11 +485,15 @@ with open(imagesTxt_path, 'r') as f:
                         # Find image height and width separately
 
                         # ----- IMAGE TEXTURE INVERSE
+
+                        # con zbuffer
+                        
                         colors, distances, valid_mask = inverse_mapping(
                                                         width, height,
                                                         extrinsics_matrix, intrinsic_matrix, img,
                                                         image_width = img.shape[1], image_height = img.shape[0]
                                                     )
+                        
                         
                         ''' commenta per testare il codice sotto
                         # Applica il criterio di z-buffering
@@ -493,17 +514,34 @@ with open(imagesTxt_path, 'r') as f:
                                 texture[y_texel, x_texel] = img[v, u]
                         '''
                         # Aggiorna la texture e il buffer di profondità
-                        ''' 
+                        
+                        '''
                         # zbuffer che tiene solo valori + vicini
                         closer_mask = valid_mask & (distances < z_buffer)
                         z_buffer[closer_mask] = distances[closer_mask]
                         texture[closer_mask] = colors[closer_mask]
                         '''
 
+                        #sempre zbuffer
+                        
                         #zbuffer che tiene valori + lontani
                         farther_mask = valid_mask & (distances > z_buffer_inverse)
                         z_buffer_inverse[farther_mask] = distances[farther_mask]
                         texture[farther_mask] = colors[farther_mask]
+                        
+
+                        '''
+                        #test con blending
+                        # elabora l'immagine corrente
+                        colors, valid_mask = inverse_mapping(
+                            width, height,
+                            extrinsics_matrix, intrinsic_matrix, img,
+                            image_width = img.shape[1], image_height = img.shape[0]
+                        )
+
+                        # aggiorna la texture finale con il blending
+                        texture[valid_mask] += colors[valid_mask]
+                        '''
                         
 
 # ********* Post-processing: create texture
@@ -520,6 +558,10 @@ for (u_texel, v_texel), pixel_stack in texture.items():
 
 # INVERSE MAPPING - comment if using forward map.
 equirectangular_image = texture
+
+'''blending'''
+# Normalizza i colori: media ponderata
+texture = np.clip(texture, 0, 255).astype(np.uint8)
 
 # View the image
 plt.imshow(equirectangular_image)
