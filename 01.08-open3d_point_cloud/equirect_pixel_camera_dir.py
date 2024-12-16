@@ -209,10 +209,8 @@ def inverse_mapping(width, height, extrinsics, intrinsics, image, image_width, i
     valid_mask &= (u_image >= 0) & (u_image < image_width)
     valid_mask &= (v_image >= 0) & (v_image < image_height)
 
-    # se attivo zbuffer
-    
-    # calcolo della distanza per il criterio del z-buffer
-    distances = np.linalg.norm(w_global, axis=-1)
+    # se attivo zbuffer    
+    distances = np.linalg.norm(d_local, axis=-1)  # Distanza per ogni pixel proiettato
 
     # colori della texture proiettati
     colors = np.zeros((height, width, 3), dtype=np.uint8)
@@ -387,7 +385,7 @@ cameras_extrinsics = []
 # Read 1 image every 'skip'
 # e.g. If I have 10 imgs and skip = 3, read images:
 # 3, 6, 9
-skip = 80 # if 1: do not skip imgs
+skip = 1 # if 1: do not skip imgs
 print("-- You are reading 1 image every ", skip)
 
 with open(imagesTxt_path, 'r') as f:
@@ -559,9 +557,13 @@ for (u_texel, v_texel), pixel_stack in texture.items():
 # INVERSE MAPPING - comment if using forward map.
 equirectangular_image = texture
 
-'''blending'''
+#zbuffer: non fare nulla va bne così
+
+'''
+# blending
 # Normalizza i colori: media ponderata
 texture = np.clip(texture, 0, 255).astype(np.uint8)
+'''
 
 # View the image
 plt.imshow(equirectangular_image)
