@@ -158,9 +158,7 @@ proiezione inversa (wglobal→wlocal→(u,v)):
     u_image = d_local[0] / d_local[2]
     v_image = d_local[1] / d_local[2]
 '''
-def inverse_mapping(width, height, extrinsics, intrinsics, image, image_width, image_height):
-    print("img width, img height",image_width, image_height)
-    
+def inverse_mapping(width, height, extrinsics, intrinsics, image, image_width, image_height, pixel_distances):   
     # griglia di texel (u_texel, v_texel)
     u_texel, v_texel = np.meshgrid(np.arange(width), np.arange(height))
 
@@ -184,7 +182,7 @@ def inverse_mapping(width, height, extrinsics, intrinsics, image, image_width, i
     La matrice di rotazione 
     - R^T  (trasposta della matrice di rotazione della telecamera).
     w_local = R^T * (w_global)
-    La trasf è senza rotazione perchè stiamo considerando punti all'infinito! -> la dir globale w_global è semplicemente ruotata nel sist di rif locale della telecamera
+    La trasf è senza traslazione perchè stiamo considerando punti all'infinito! -> la dir globale w_global è semplicemente ruotata nel sist di rif locale della telecamera
 
     '''
     R = extrinsics[:3, :3]
@@ -200,26 +198,40 @@ def inverse_mapping(width, height, extrinsics, intrinsics, image, image_width, i
     u_image = np.full((height, width), -1, dtype=np.int32)
     v_image = np.full((height, width), -1, dtype=np.int32)
 
+    # dividi per Z per ottenere le coordinate immagine (proiezione prospettica)
     u_image[valid_mask] = (d_local[valid_mask, 0] / d_local[valid_mask, 2]).astype(int)
     v_image[valid_mask] = (d_local[valid_mask, 1] / d_local[valid_mask, 2]).astype(int)
-
-    print(np.shape(u_image), np.shape(v_image))
 
     # escludi punti fuori dai bordi - no clipping
     valid_mask &= (u_image >= 0) & (u_image < image_width)
     valid_mask &= (v_image >= 0) & (v_image < image_height)
 
-    # se attivo zbuffer    
-    distances = np.linalg.norm(d_local, axis=-1)  # Distanza per ogni pixel proiettato
+
+    ''''''# se attivo zbuffer
+
+
+
+    #distances = np.linalg.norm(d_local, axis=-1)  # Distanza per ogni pixel proiettato
+    # quasi sicuramente sbaglio qualcosa, tipo il calcolo della distanza deve essere fatto sull'immagine stessa! chissene importa del vettore dlocal
+    # calcolare la distanza tra il punto proiettato e il punto dell'immagine
 
     # colori della texture proiettati
+    u_image_valid = u_image[valid_mask]
+    v_image_valid = v_image[valid_mask]
+
+    # estrai i colori dall'immagine originale per i texel validi
     colors = np.zeros((height, width, 3), dtype=np.uint8)
-    colors[valid_mask] = image[v_image[valid_mask], u_image[valid_mask]]
-    return colors, distances, valid_mask
+    colors[valid_mask] = image[v_image_valid, u_image_valid]
+
+    # Mappa le distanze dall'immagine originale ai texel validi
+    distances_texture = np.full((height, width), -np.inf)
+    distances_texture[valid_mask] = pixel_distances[v_image[valid_mask], u_image[valid_mask]]
+
+    return colors, valid_mask, distances_texture
     
 
     '''
-    # se attivo blending
+    ''''''# se attivo blending
     # blending
     colors = np.zeros((height, width, 3), dtype=np.uint8)
     for u, v in zip(u_image[valid_mask], v_image[valid_mask]):
@@ -230,6 +242,22 @@ def inverse_mapping(width, height, extrinsics, intrinsics, image, image_width, i
     
     return colors, valid_mask   
     '''
+
+def calculate_pixel_distances(intrinsics, image_width, image_height):
+    # 1. Crea una griglia di coordinate pixel (u, v)
+    u, v = np.meshgrid(np.arange(image_width), np.arange(image_height))  # Shape: (H, W)
+    
+    # 2. Converti in coordinate omogenee dei pixel
+    pixel_coords = np.stack([u, v, np.ones_like(u)], axis=-1)  # Shape: (H, W, 3)
+    
+    # 3. Calcola d_local = K^{-1} * pixel_coords
+    K_inv = np.linalg.inv(intrinsics)
+    d_camera = np.einsum('ij,hwj->hwi', K_inv, pixel_coords)  # Shape: (H, W, 3)
+    
+    # 4. Calcola la distanza euclidea di ciascun pixel dal centro della camera
+    distances = np.linalg.norm(d_camera, axis=-1)  # Shape: (H, W)
+
+    return distances
  
 # ************************** PATHS **************************
 cameraTxt_path = '../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/cameras.txt'
@@ -298,8 +326,8 @@ with open(cameraTxt_path, 'r') as f:
             # SIMPLE_RADIAL: fx (fx = fy), cx, cy, k1   1 focal length, principal point and radial distortion
             # RADIAL: fx (fx = fy), cx, cy, k1, k2      1 focal lengths, principal point and 2 radial distortions
 
-            width = int(single_camera_info[2])
-            height = int(single_camera_info[3])
+            texture_width = int(single_camera_info[2])
+            texture_height = int(single_camera_info[3])
 
             if single_camera_info[1] == "SIMPLE_PINHOLE":
                 fx = float(single_camera_info[4])
@@ -336,8 +364,8 @@ intrinsic_matrix = np.array([[fx, 0, cx],
                              [0, 0, 1]])
 
 print("--- Camera: ", camera_info[0][1])
-print(" Width: ", width)
-print(" Height: ", height)
+print(" Width: ", texture_width)
+print(" Height: ", texture_height)
 print(" fx: ", fx)
 print(" fy: ", fy)
 print(" cx: ", cx)
@@ -349,7 +377,7 @@ if 'k2' in locals():
     print(" k2: ", k2)
 
 #intrinsics = o3d.camera.PinholeCameraIntrinsic(width, height, fx, fy, cx, cy) #alternatively
-intrinsics = o3d.camera.PinholeCameraIntrinsic(width, height, intrinsic_matrix)
+intrinsics = o3d.camera.PinholeCameraIntrinsic(texture_width, texture_height, intrinsic_matrix)
 
 # ************************** EXTRACT EXTRINSICS FROM IMAGES.TXT FILE **************************
 # Extrinsic matrix:
@@ -365,7 +393,7 @@ all_lines = []
 cameras_coords = []
 
 # COMMON
-width, height = 2048, 1024
+texture_width, texture_height = 2048, 1024
 
 # FORWARD MAPPING - comment if using inverse map.
 '''
@@ -373,9 +401,9 @@ texture = defaultdict(list)
 '''
 
 # INVERSE MAPPING - comment if using forward map
-texture = np.zeros((height, width, 3), dtype=np.uint8)
-z_buffer = np.full((height, width), np.inf)
-z_buffer_inverse = np.full((height, width), -np.inf)
+texture = np.zeros((texture_height, texture_width, 3), dtype=np.uint8)
+z_buffer = np.full((texture_height, texture_width), np.inf)
+z_buffer_inverse = np.full((texture_height, texture_width), -np.inf)
 
 # LOOP INFO
 count = 0
@@ -385,7 +413,7 @@ cameras_extrinsics = []
 # Read 1 image every 'skip'
 # e.g. If I have 10 imgs and skip = 3, read images:
 # 3, 6, 9
-skip = 1 # if 1: do not skip imgs
+skip = 10 # if 1: do not skip imgs
 print("-- You are reading 1 image every ", skip)
 
 with open(imagesTxt_path, 'r') as f:
@@ -485,48 +513,26 @@ with open(imagesTxt_path, 'r') as f:
                         # ----- IMAGE TEXTURE INVERSE
 
                         # con zbuffer
-                        
-                        colors, distances, valid_mask = inverse_mapping(
-                                                        width, height,
-                                                        extrinsics_matrix, intrinsic_matrix, img,
-                                                        image_width = img.shape[1], image_height = img.shape[0]
-                                                    )
-                        
-                        
-                        ''' commenta per testare il codice sotto
-                        # Applica il criterio di z-buffering
-                        mask = (
-                            (u_image >= 0) & (u_image < img.shape[1]) &
-                            (v_image >= 0) & (v_image < img.shape[0]) &
-                            valid_mask
-                        )
+                        image_width = img.shape[1]
+                        image_height = img.shape[0]
 
-                        # Aggiorna z-buffer e texture
-                        u_image, v_image = u_image[mask], v_image[mask]
-                        texel_coords = np.argwhere(mask)
-
-                        for texel, u, v in zip(texel_coords, u_image, v_image):
-                            y_texel, x_texel = texel
-                            if distances[y_texel, x_texel] < z_buffer[y_texel, x_texel]:
-                                z_buffer[y_texel, x_texel] = distances[y_texel, x_texel]
-                                texture[y_texel, x_texel] = img[v, u]
-                        '''
-                        # Aggiorna la texture e il buffer di profondità
+                        distances = calculate_pixel_distances(intrinsic_matrix, image_width, image_height)
                         
-                        '''
-                        # zbuffer che tiene solo valori + vicini
-                        closer_mask = valid_mask & (distances < z_buffer)
-                        z_buffer[closer_mask] = distances[closer_mask]
-                        texture[closer_mask] = colors[closer_mask]
-                        '''
-
-                        #sempre zbuffer
+                        colors, valid_mask, mapped_distances = inverse_mapping(
+                                                                texture_width, texture_height,
+                                                                extrinsics_matrix, intrinsic_matrix, img,
+                                                                image_width, image_height, distances
+                                                            )
                         
+                        
+                        # Aggiorna la texture e il buffer di profondità                        
                         #zbuffer che tiene valori + lontani
-                        farther_mask = valid_mask & (distances > z_buffer_inverse)
-                        z_buffer_inverse[farther_mask] = distances[farther_mask]
+
+
+                        # Aggiorna la texture usando il buffer delle distanze (z-buffer inverso)
+                        farther_mask = valid_mask & (mapped_distances > z_buffer_inverse)
+                        z_buffer_inverse[farther_mask] = mapped_distances[farther_mask]
                         texture[farther_mask] = colors[farther_mask]
-                        
 
                         '''
                         #test con blending
@@ -541,6 +547,10 @@ with open(imagesTxt_path, 'r') as f:
                         texture[valid_mask] += colors[valid_mask]
                         '''
                         
+plt.imshow(z_buffer_inverse, cmap='viridis')
+plt.colorbar()
+plt.title("Buffer delle Distanze (Inverso)")
+plt.show()
 
 # ********* Post-processing: create texture
 
