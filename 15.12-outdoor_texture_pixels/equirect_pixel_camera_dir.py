@@ -8,16 +8,6 @@ import pylab as plt
 import math
 from collections import defaultdict
 
-'''mi pare che il codice nella mappatura pixel-> texel vada fixato semplicemente togliendo la depth. 
-Non devi calcolare "punti" se sulle immagini fai loop sui pixel, ti basta ricavare la direzione del 
-pixel ray, ruotarla nel riferimento globale e usare il vettore ricavato per il calcolo delle coordinate 
-sulla texture. Però penso sia il caso di implementare la procedura inversa dello pseudocodice per cui 
-occorre ricavare la funzione che dà colore e  attributo per lo z buffer dati camera e coordinata del 
-texel da riempire. Non dovrebbe essere complicato, si può fare anche in quel caso volendo il loop sui 
-file delle immagini e dentro fare il loop sui texel ricavare le coordinate immagine e se sono nel range, 
-ricavare il colore e la metrica di scelta
-naturalmente si escluderanno poi i punti "vicini"'''
-
 # FORWARD MAPPING - (project from image to texture) Project pixel in 3d using depth
 def project_pixels_with_depth(image, depth, K, extrinsics, width, height):
     # img size
