@@ -255,7 +255,7 @@ with open(imagesTxt_path, 'r') as f:
                         plt.axis('off')
                         plt.show()
 
-                        # ---- Read depth anything v2 (da) depth map - non metric version
+                        # ---- Read depth anything v2 (da) depth map - NON metric version
                         # Grayscale image from 0 to 255, where, originally, the HIGHER the color value, the CLOSER the pixel is
                         depth_map_da_non_metric_filename = Path(img_filename).stem + ".png" # get the filename of the depth map (remove file extension)
                         depth_map_da_non_metric_path = os.path.join(depth_map_da_non_metric_folder, depth_map_da_non_metric_filename)
@@ -268,6 +268,9 @@ with open(imagesTxt_path, 'r') as f:
                         plt.imshow(inverted_depth_da_non_metric, cmap='gray', vmin=0, vmax=255)
                         plt.axis('off')
                         plt.show()
+
+                        # ---- Read depth anything v2 (da) depth map - METRIC version
+                        
 
                         # ----------- FIND A FUNCTION
                         '''
@@ -326,8 +329,8 @@ with open(imagesTxt_path, 'r') as f:
                         scaled_depth_map = poly.polyval(inverted_depth_da_non_metric, function_coefs)
 
                         
-                        plt.imshow(scaled_depth_map,  cmap='red', vmin=0, vmax=255)
-                        plt.title("Davide burlone Scaled Depth Map")
+                        plt.imshow(scaled_depth_map, cmap='gray', vmin=0, vmax=255)
+                        plt.title("Scaled Depth Map") #tsk
                         plt.show()
                         
 
