@@ -1,0 +1,358 @@
+import open3d as o3d
+import numpy as np
+from PIL import Image
+import os
+import matplotlib
+matplotlib.use('TkAgg')
+import pylab as plt
+import math
+from collections import defaultdict
+from pathlib import Path
+import numpy.polynomial.polynomial as poly
+
+# from colmap codebase
+def read_array(path):
+    with open(path, "rb") as fid:
+        width, height, channels = np.genfromtxt(
+            fid, delimiter="&", max_rows=1, usecols=(0, 1, 2), dtype=int
+        )
+        fid.seek(0)
+        num_delimiter = 0
+        byte = fid.read(1)
+        while True:
+            if byte == b"&":
+                num_delimiter += 1
+                if num_delimiter >= 3:
+                    break
+            byte = fid.read(1)
+        array = np.fromfile(fid, np.float32)
+    array = array.reshape((width, height, channels), order="F")
+    return np.transpose(array, (1, 0, 2)).squeeze()
+
+
+# ************************** PATHS **************************
+cameraTxt_path = '../datasets/colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/cameras.txt'
+imagesTxt_path = '../datasets/colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/images.txt'
+imgs_folder = "../datasets/colmap_reconstructions/water_bottle_gui_pinhole_1camera/images"
+depth_map_colmap_folder = '../datasets/colmap_reconstructions/water_bottle_gui_pinhole_1camera/stereo/depth_maps'
+
+cameraTxt_path = '../datasets/colmap_reconstructions/colmap_output_simple_radial/sparse/cameras.txt'
+imagesTxt_path = '../datasets/colmap_reconstructions/colmap_output_simple_radial/sparse/images.txt'
+imgs_folder = "../datasets/colmap_reconstructions/colmap_output_simple_radial/dense/images"
+depth_map_colmap_folder = '../datasets/colmap_reconstructions/colmap_output_simple_radial/dense/stereo/depth_maps'
+
+cameraTxt_path = '../datasets/colmap_reconstructions/cavignal-bench_pinhole_1camera/sparse/cameras.txt'
+imagesTxt_path = '../datasets/colmap_reconstructions/cavignal-bench_pinhole_1camera/sparse/images.txt'
+imgs_folder = "../datasets/colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/images"
+depth_map_colmap_folder = '../datasets/colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/stereo/depth_maps'
+depth_map_da_non_metric_folder = '../depth-anything-estimations/non-metric_depths/cavignal_bench'
+depth_map_da_metric_folder = '../depth-anything-estimations/metric_depths/cavignal_bench'
+
+
+cameraTxt_path = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/cameras.txt'
+imagesTxt_path = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/images.txt'
+imgs_folder = "../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/images"
+depth_map_colmap_folder = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/stereo/depth_maps'
+depth_map_da_non_metric_folder = '../depth-anything-estimations/non-metric_depths/cavignal_fountain'
+depth_map_da_metric_folder = '../depth-anything-estimations/metric_depths/cavignal_fountain'
+
+
+# ************************** EXTRACT INTRINSICS FROM CAMERA.TXT FILE **************************
+# Intrinsics matrix:
+# [fx, 0, cx]
+# [0, fy, cy]
+# [0, 0,  1 ]
+
+
+# ************** READ COLMAP CAMERA.TXT FILE    
+
+# ***  WARNING: THIS SCRIPT ASSUMES THAT ALL CAMERAS HAVE THE SAME INTRINSICS ***
+# ***  SO IN THE CAMERA.TXT FILE WE WILL ONLY READ THE FIRST CAMERA INTRINSICS ***
+# *** (ALSO BEACUSE THERE IS ONLY ONE CAMERA IN THE CAMERA.TXT FILE IF THEY SHARE THE SAME INTRINSICS) ***
+
+# Camera list with one line of data per camera:
+#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]
+#
+# In case of Pinhole camera model (example):
+# 1 PINHOLE 3072 2304 2560.56 2560.56 1536 1152
+# 
+# In case of Simple Pinhole camera model (example):
+# 2 SIMPLE_PINHOLE 3072 2304 2559.81 1536 1152
+#
+# In case of Simple Radial camera model (example):
+# 3 SIMPLE_RADIAL 3072 2304 2559.69 1536 1152 -0.0218531
+
+camera_info = []
+
+# Load the camera intrinsics 
+with open(cameraTxt_path, 'r') as f:
+    for line in f:    
+        # Ignore comments
+        if not line.startswith("#"):
+            single_camera_info = line.split() # split every field in line
+            camera_info.append(single_camera_info) # and store them as separate fields as list in a list ( [ [] ] )
+
+            # Camera info contains:
+            # CAMERA_ID  MODEL   WIDTH   HEIGHT  PARAMS[]
+            # 0          1       2       3       4   5   6   7   8
+            # Where PARAMS[] are:
+            # SIMPLE_PINHOLE: fx (fx = fy), cx, cy      1 focal length and principal point
+            # PINHOLE: fx, fy, cx, cy                   2 focal lenghts and principal point
+            # SIMPLE_RADIAL: fx (fx = fy), cx, cy, k1   1 focal length, principal point and radial distortion
+            # RADIAL: fx (fx = fy), cx, cy, k1, k2      1 focal lengths, principal point and 2 radial distortions
+
+            texture_width = int(single_camera_info[2])
+            texture_height = int(single_camera_info[3])
+
+            if single_camera_info[1] == "SIMPLE_PINHOLE":
+                fx = float(single_camera_info[4])
+                fy = float(single_camera_info[4]) #same as fx
+                cx = float(single_camera_info[5])
+                cy = float(single_camera_info[6])
+
+            if single_camera_info[1] == "PINHOLE":
+                fx = float(single_camera_info[4])
+                fy = float(single_camera_info[5]) 
+                cx = float(single_camera_info[6])
+                cy = float(single_camera_info[7])
+
+            if single_camera_info[1] == "SIMPLE_RADIAL":
+                fx = float(single_camera_info[4])
+                fy = float(single_camera_info[4]) #same as fx
+                cx = float(single_camera_info[5])
+                cy = float(single_camera_info[6])
+                k1 = float(single_camera_info[7])
+
+            if single_camera_info[1] == "RADIAL":
+                fx = float(single_camera_info[4])
+                fy = float(single_camera_info[4]) #same as fx
+                cx = float(single_camera_info[5])
+                cy = float(single_camera_info[6])
+                k1 = float(single_camera_info[7])
+                k2 = float(single_camera_info[8])  
+
+            break    # We only need the first camera intrinsics (assume all cameras have the same intrinsics)  
+
+# Create the camera intrinsic matrix
+intrinsic_matrix = np.array([[fx, 0, cx],
+                             [0, fy, cy],
+                             [0, 0, 1]])
+
+print("--- Camera: ", camera_info[0][1])
+print(" Width: ", texture_width)
+print(" Height: ", texture_height)
+print(" fx: ", fx)
+print(" fy: ", fy)
+print(" cx: ", cx)
+print(" cy: ", cy)  
+
+if 'k1' in locals():
+    print(" k1: ", k1)
+if 'k2' in locals():
+    print(" k2: ", k2)
+
+#intrinsics = o3d.camera.PinholeCameraIntrinsic(width, height, fx, fy, cx, cy) #alternatively
+intrinsics = o3d.camera.PinholeCameraIntrinsic(texture_width, texture_height, intrinsic_matrix)
+
+# ************************** EXTRACT EXTRINSICS FROM IMAGES.TXT FILE **************************
+# Extrinsic matrix:
+# [r1.1, r1.2, r1.3, tx]
+# [r2.1, r2.2, r2.3, ty]
+# [r3.1, r3.2, r3.3, tz]
+# [0,    0,    0,    1 ]
+
+# COMMON
+texture_width, texture_height = 2048, 1024
+
+# LOOP INFO
+count = 0
+count_imgs = 0
+cameras_info = []
+cameras_extrinsics = []
+# Read 1 image every 'skip'
+# e.g. If I have 10 imgs and skip = 3, read images:
+# 3, 6, 9
+skip = 10 # if 1: do not skip imgs
+
+print("---Reading images from dataset: \t", imgs_folder)
+print("-- You are reading 1 image every ", skip)
+
+with open(imagesTxt_path, 'r') as f:
+    for line in f:    
+        # Ignore comments
+        if not line.startswith("#"):
+            count+=1
+
+            if(count > 0):
+                if count % 2 != 0: # Read every other line (skip the second line for every image)
+                    count_imgs += 2
+    
+                    if count_imgs % skip == 0: # salta tot righe
+                        
+                        print("--- Img num ", (count_imgs/skip)/2 if skip %2 != 0 else count_imgs/skip)
+                        print("Count: ", count)
+
+                        single_camera_info = line.split() # split every field in line
+                        cameras_info.append(single_camera_info) # and store them as separate fields as list in a list ( [ [] ] )
+
+                        # Images info contains:
+                        # IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
+                        # 0         1   2   3   4   5   6   7   8          9
+
+                        # CREATE ROTATION MATRIX 'R' FROM QUATERNIONS
+                        quaternions = np.array([single_camera_info[1], single_camera_info[2], single_camera_info[3], single_camera_info[4]]) # numpy array
+                        rotation_matrix = o3d.geometry.get_rotation_matrix_from_quaternion(quaternions)
+
+                        # CREATE TRANSLATION VECTOR T
+                        translation = np.array([single_camera_info[5], single_camera_info[6], single_camera_info[7]], dtype = float)
+
+                        # CREATE EXTRINSICS MATRIX                
+                        extrinsics_matrix = np.vstack([np.hstack([rotation_matrix, translation.reshape(3, 1)]), 
+                                                        np.array([0, 0, 0, 1])])
+
+                        cameras_extrinsics.append(extrinsics_matrix)
+
+                        # ----------- FIND CAMERA CENTER
+                        # TRANSPOSE R (R^t)
+                        rotation_transpose = rotation_matrix.transpose()
+
+                        # MULTIPLY R_TRANSPOSED BY * (-1) (-R^t)
+                        rotation_trans_inv = (-1) * rotation_transpose
+
+                        # CREATE TRANSLATION VECTOR T
+                        translation = np.array([single_camera_info[5], single_camera_info[6], single_camera_info[7]], dtype = float)
+
+                        # DOT PRODUCT (*) BETWEEN INVERTED_R_TRANSPOSED (-R^t) AND TRANSLATION VECTOR (T)
+                        # TO FIND CAMERA CENTER
+                        camera_center = np.dot(rotation_trans_inv, translation)
+
+                        # ------------- DEPTH
+
+                        # PLEASE NOTE: 
+                        # depth anything v2 uses an 'inverse' depth: the closer to the camera the point, the 'whiter' (= higher value) the pixel.
+                        # Since i don't think is a good measure, and to standardize the method with colmap, i'm going to INVERT the values
+                        #
+                        # SO THE STANDARD IS:
+                        # The LOWER the pixel value is, the CLOSER the pixel is to the camera 
+
+                        # Take the image file name
+                        img_filename = single_camera_info[9]
+
+                        # ---- Read colmap depth map
+                        # Numpy array with relative values, where the LOWER the value, the CLOSER the pixel is to the camera
+                        depth_map_colmap_filename = img_filename + '.geometric.bin' # get the filename of the depth map
+                        depth_map_colmap_path = os.path.join(depth_map_colmap_folder, depth_map_colmap_filename)
+                        
+                        depth_colmap = read_array(depth_map_colmap_path)
+
+                        max = np.max(depth_colmap)
+                        min = np.min(depth_colmap)
+
+                        norm_depth_colmap = ((depth_colmap - min)/(max-min)) * 255
+
+                        # View grayscale from 0 to 255 (test)
+                        plt.imshow(norm_depth_colmap, cmap='gray', vmin=0, vmax=255)
+                        plt.axis('off')
+                        plt.show()
+
+                        # ---- Read depth anything v2 (da) depth map - non metric version
+                        # Grayscale image from 0 to 255, where, originally, the HIGHER the color value, the CLOSER the pixel is
+                        depth_map_da_non_metric_filename = Path(img_filename).stem + ".png" # get the filename of the depth map (remove file extension)
+                        depth_map_da_non_metric_path = os.path.join(depth_map_da_non_metric_folder, depth_map_da_non_metric_filename)
+
+                        depth_da_non_metric = np.asarray(Image.open(depth_map_da_non_metric_path).convert('L')) # convert 'L': open as greyscale 
+
+                        inverted_depth_da_non_metric = np.invert(depth_da_non_metric)
+
+                        # View grayscale from 0 to 255 (test)
+                        plt.imshow(inverted_depth_da_non_metric, cmap='gray', vmin=0, vmax=255)
+                        plt.axis('off')
+                        plt.show()
+
+                        # ----------- FIND A FUNCTION
+                        '''
+                        - The Depth Anything (DA) map is dense/complete, but it does not have scaled or 'real' (not metric) values
+                        - The Colmap map has scaled and 'real' (not metric) values, but is not complete: lots of point have 0 as 
+                          depth because the method is unable to estimate it
+
+                        So, we want to perform a scale: scale the DA map in the reference system of the colmap map using 
+                        a function, that we try to fit as a polynomial on the colmap map. We should exclude the '0' points that
+                        are not useful in the colmap map, and, similarly, exclude the same points in the DA map to avoid creating
+                        a wrong fitted function.
+                        At the end, we should apply the final function to the DA map and obtain a complete and scaled depth map.
+                        Please note that we may need to find a function different FOR EACH image, since the DA maps are not consistent 
+                        when generated from independent frames.
+                        However, we can try to generate the depths using the 'video' method that depth anyting provides. 
+                        Maybe in this way we can avoid finding a function for each frame, and just have one fitted function
+                        '''
+
+                        # ---- Flatten
+                        da_values_flat = inverted_depth_da_non_metric.flatten()
+                        colmap_values_flat = depth_colmap.flatten()
+
+                        # find zeros indexes in colmap map
+                        zero_indexes_in_colmap = np.where(colmap_values_flat == 0)[0]
+                        
+                        # remove these indexes from both maps values
+                        da_values_clean = np.delete(da_values_flat, zero_indexes_in_colmap)
+                        colmap_values_clean = np.delete(colmap_values_flat, zero_indexes_in_colmap)
+
+                        # call the fitting method (new)
+                        # x = depth anything clean vals
+                        # y = colmap clean vals
+                        # deg = try 3
+
+                        # NOTA: MEGLIO USARE poly.polyfit E NON poly.Polynomial.fit, perchè 'fit' 
+                        # sono scalati con un linear mapping (not sure what it means), quindi per avere i coeff nell'unscaled data domain
+                        # bisogna fare .convert():
+                        # poly.Polynomial.fit(x, y, 2).convert().coef
+                        # oppure dare una finestra vuota nel dominio:
+                        # poly.Polynomial.fit(x, y, 2, domain=[]).coef
+                        # oppure dare come finestra in max e min dei dati:
+                        # poly.Polynomial.fit(x, y, 2, window=(x.min(), x.max())).coef
+                        
+
+                        # create a polynomial in the form of:
+                        # c0 + c1 * x + c2 * x^2 + c3 * x^3 ... + cn * x^n
+                        # where c0...cn are the coefficients in the same orders that output from poly.polyfit
+                        function_coefs = poly.polyfit(da_values_clean, colmap_values_clean, 3) # deg: 3
+                        print(function_coefs)
+
+                        function_polynomial = poly.Polynomial(function_coefs)
+                        print(function_polynomial)                        
+
+                        # apply the fitted function to each value of the depth anything pixel depth map to create a scaled version
+                        # Applica il polinomio a tutta la depth map in una sola operazione
+                        scaled_depth_map = poly.polyval(inverted_depth_da_non_metric, function_coefs)
+
+                        
+                        plt.imshow(scaled_depth_map,  cmap='red', vmin=0, vmax=255)
+                        plt.title("Davide burlone Scaled Depth Map")
+                        plt.show()
+                        
+
+                        # Punti per la curva del polinomio
+                        x_fit = np.linspace(da_values_clean.min(), da_values_clean.max(), 500)  # Asse X per il polinomio
+                        y_fit = function_polynomial(x_fit)  # Valori corrispondenti del polinomio
+
+                        # Plot
+                        plt.figure(figsize=(8, 6))
+                        plt.scatter(da_values_clean, colmap_values_clean, color='blue', s=1, alpha=0.5, label='Dati Originali')
+                        plt.plot(x_fit, y_fit, color='red', linewidth=2, label=f'Polinomio di grado 3')
+                        plt.xlabel("Depth Anything (DA) Values")
+                        plt.ylabel("Colmap Values")
+                        plt.title("Fitting Polinomiale tra DA e Colmap")
+                        plt.legend()
+                        plt.grid()
+                        plt.show()
+
+                        # ----------- IMAGE
+
+                        # Read the image
+                        img_path = os.path.join(imgs_folder, img_filename)
+                        img = np.asarray(Image.open(img_path))   
+
+
+
+
+

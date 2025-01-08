@@ -250,26 +250,26 @@ def calculate_pixel_distances(intrinsics, image_width, image_height):
     return distances
  
 # ************************** PATHS **************************
-cameraTxt_path = '../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/cameras.txt'
-imagesTxt_path = '../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/images.txt'
-imgs_folder = "../colmap_reconstructions/water_bottle_gui_pinhole_1camera/images"
-depth_map_folder = '../colmap_reconstructions/water_bottle_gui_pinhole_1camera/stereo/depth_maps'
+cameraTxt_path = '../datasets/colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/cameras.txt'
+imagesTxt_path = '../datasets/colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/images.txt'
+imgs_folder = "../datasets/colmap_reconstructions/water_bottle_gui_pinhole_1camera/images"
+depth_map_folder = '../datasets/colmap_reconstructions/water_bottle_gui_pinhole_1camera/stereo/depth_maps'
 
-cameraTxt_path = '../colmap_reconstructions/colmap_output_simple_radial/sparse/cameras.txt'
-imagesTxt_path = '../colmap_reconstructions/colmap_output_simple_radial/sparse/images.txt'
-imgs_folder = "../colmap_reconstructions/colmap_output_simple_radial/dense/images"
-depth_map_folder = '../colmap_reconstructions/colmap_output_simple_radial/dense/stereo/depth_maps'
+cameraTxt_path = '../datasets/colmap_reconstructions/colmap_output_simple_radial/sparse/cameras.txt'
+imagesTxt_path = '../datasets/colmap_reconstructions/colmap_output_simple_radial/sparse/images.txt'
+imgs_folder = "../datasets/colmap_reconstructions/colmap_output_simple_radial/dense/images"
+depth_map_folder = '../datasets/colmap_reconstructions/colmap_output_simple_radial/dense/stereo/depth_maps'
 
-cameraTxt_path = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/sparse/cameras.txt'
-imagesTxt_path = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/sparse/images.txt'
-imgs_folder = "../colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/images"
-depth_map_folder = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/stereo/depth_maps'
+cameraTxt_path = '../datasets/colmap_reconstructions/cavignal-bench_pinhole_1camera/sparse/cameras.txt'
+imagesTxt_path = '../datasets/colmap_reconstructions/cavignal-bench_pinhole_1camera/sparse/images.txt'
+imgs_folder = "../datasets/colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/images"
+depth_map_folder = '../datasets/colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/stereo/depth_maps'
 
 '''
-cameraTxt_path = '../colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/cameras.txt'
-imagesTxt_path = '../colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/images.txt'
-imgs_folder = "../colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/images"
-depth_map_folder = '../colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/stereo/depth_maps'
+cameraTxt_path = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/cameras.txt'
+imagesTxt_path = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/images.txt'
+imgs_folder = "../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/images"
+depth_map_folder = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/stereo/depth_maps'
 '''
 
 # ************************** EXTRACT INTRINSICS FROM CAMERA.TXT FILE **************************
