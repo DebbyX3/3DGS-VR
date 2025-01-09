@@ -10,6 +10,77 @@ from collections import defaultdict
 from pathlib import Path
 import numpy.polynomial.polynomial as poly
 
+'''
+Fit a depth map on another using a polynomial function
+    depth_to_scale = the depth_map to scale/fit
+    depth_to_base_on = the depth map used as a reference, on which depth_to_scale will be scaled on
+    poly_deg = degree on polynomial
+
+Returns: polynomial coefficients
+'''
+def scale_texture_poly (depth_to_scale, depth_to_base_on, poly_deg):
+
+    # ---- Flatten
+    depth_to_scale_flat = depth_to_scale.flatten()
+    depth_to_base_on_flat = depth_to_base_on.flatten()
+
+    # find zeros indexes in colmap map
+    zero_indexes_depth_to_base_on = np.where(depth_to_base_on_flat == 0)[0]
+    
+    # remove these indexes from both maps values
+    depth_to_scale_values_clean = np.delete(depth_to_scale_flat, zero_indexes_depth_to_base_on)
+    depth_to_base_on_values_clean = np.delete(depth_to_base_on_flat, zero_indexes_depth_to_base_on)
+
+    # call the fitting method (new)
+    # x = depth to scale clean vals
+    # y = colmap to base on clean vals
+    # deg = poly_deg
+
+    # NOTA: MEGLIO USARE poly.polyfit E NON poly.Polynomial.fit, perchè 'fit' 
+    # sono scalati con un linear mapping (not sure what it means), quindi per avere i coeff nell'unscaled data domain
+    # bisogna fare .convert():
+    # poly.Polynomial.fit(x, y, 2).convert().coef
+    # oppure dare una finestra vuota nel dominio:
+    # poly.Polynomial.fit(x, y, 2, domain=[]).coef
+    # oppure dare come finestra in max e min dei dati:
+    # poly.Polynomial.fit(x, y, 2, window=(x.min(), x.max())).coef    
+
+    # create a polynomial in the form of:
+    # c0 + c1 * x + c2 * x^2 + c3 * x^3 ... + cn * x^n
+    # where c0...cn are the coefficients in the same orders that output from poly.polyfit
+    function_coefs = poly.polyfit(depth_to_scale_values_clean, depth_to_base_on_values_clean, poly_deg) 
+    print(function_coefs)
+
+    function_polynomial = poly.Polynomial(function_coefs)
+    print(function_polynomial)                        
+
+    # apply the fitted function to each value of the depth anything pixel depth map to create a scaled version
+    # Applica il polinomio a tutta la depth map in una sola operazione
+    scaled_depth_map = poly.polyval(depth_to_scale, function_coefs)
+
+    
+    plt.imshow(scaled_depth_map, cmap='gray', vmin=0, vmax=255)
+    plt.title("Scaled Depth Map")
+    plt.show()
+    
+
+    # Punti per la curva del polinomio
+    x_fit = np.linspace(depth_to_scale_values_clean.min(), depth_to_scale_values_clean.max(), 500)  # Asse X per il polinomio
+    y_fit = function_polynomial(x_fit)  # Valori corrispondenti del polinomio
+
+    # Plot
+    plt.figure(figsize=(8, 6))
+    plt.scatter(depth_to_scale_values_clean, depth_to_base_on_values_clean, color='blue', s=1, alpha=0.5, label='Dati Originali')
+    plt.plot(x_fit, y_fit, color='red', linewidth=2, label=f'Polinomio di grado 3')
+    plt.xlabel("Depth Anything (DA) Values")
+    plt.ylabel("Colmap Values")
+    plt.title("Fitting Polinomiale tra DA e Colmap")
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+    return function_coefs
+
 # from colmap codebase
 def read_array(path):
     with open(path, "rb") as fid:
@@ -304,66 +375,13 @@ with open(imagesTxt_path, 'r') as f:
                         Maybe in this way we can avoid finding a function for each frame, and just have one fitted function
                         '''
 
-                        # ---- Flatten
-                        da_values_flat = depth_da_metric.flatten()
-                        colmap_values_flat = depth_colmap.flatten()
-
-                        # find zeros indexes in colmap map
-                        zero_indexes_in_colmap = np.where(colmap_values_flat == 0)[0]
+                        # ------------------- TEST 1: con depth DA non metriche
+                        scale_texture_poly(inverted_depth_da_non_metric, depth_colmap, 3)
                         
-                        # remove these indexes from both maps values
-                        da_values_clean = np.delete(da_values_flat, zero_indexes_in_colmap)
-                        colmap_values_clean = np.delete(colmap_values_flat, zero_indexes_in_colmap)
-
-                        # call the fitting method (new)
-                        # x = depth anything clean vals
-                        # y = colmap clean vals
-                        # deg = try 3
-
-                        # NOTA: MEGLIO USARE poly.polyfit E NON poly.Polynomial.fit, perchè 'fit' 
-                        # sono scalati con un linear mapping (not sure what it means), quindi per avere i coeff nell'unscaled data domain
-                        # bisogna fare .convert():
-                        # poly.Polynomial.fit(x, y, 2).convert().coef
-                        # oppure dare una finestra vuota nel dominio:
-                        # poly.Polynomial.fit(x, y, 2, domain=[]).coef
-                        # oppure dare come finestra in max e min dei dati:
-                        # poly.Polynomial.fit(x, y, 2, window=(x.min(), x.max())).coef
-                        
-
-                        # create a polynomial in the form of:
-                        # c0 + c1 * x + c2 * x^2 + c3 * x^3 ... + cn * x^n
-                        # where c0...cn are the coefficients in the same orders that output from poly.polyfit
-                        function_coefs = poly.polyfit(da_values_clean, colmap_values_clean, 3) # deg: 3
-                        print(function_coefs)
-
-                        function_polynomial = poly.Polynomial(function_coefs)
-                        print(function_polynomial)                        
-
-                        # apply the fitted function to each value of the depth anything pixel depth map to create a scaled version
-                        # Applica il polinomio a tutta la depth map in una sola operazione
-                        scaled_depth_map = poly.polyval(depth_da_metric, function_coefs)
+                        # ------------------- TEST 2: Con depth DA metriche
+                        #scale_texture_poly(depth_da_metric, depth_colmap, 3)
 
                         
-                        plt.imshow(scaled_depth_map, cmap='gray', vmin=0, vmax=255)
-                        plt.title("Scaled Depth Map") #tsk
-                        plt.show()
-                        
-
-                        # Punti per la curva del polinomio
-                        x_fit = np.linspace(da_values_clean.min(), da_values_clean.max(), 500)  # Asse X per il polinomio
-                        y_fit = function_polynomial(x_fit)  # Valori corrispondenti del polinomio
-
-                        # Plot
-                        plt.figure(figsize=(8, 6))
-                        plt.scatter(da_values_clean, colmap_values_clean, color='blue', s=1, alpha=0.5, label='Dati Originali')
-                        plt.plot(x_fit, y_fit, color='red', linewidth=2, label=f'Polinomio di grado 3')
-                        plt.xlabel("Depth Anything (DA) Values")
-                        plt.ylabel("Colmap Values")
-                        plt.title("Fitting Polinomiale tra DA e Colmap")
-                        plt.legend()
-                        plt.grid()
-                        plt.show()
-
                         # ----------- IMAGE
 
                         # Read the image
