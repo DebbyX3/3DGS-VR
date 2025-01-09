@@ -55,7 +55,7 @@ def project_pixels_with_depth(image, depth, K, extrinsics, width, height):
     return texel_coords, colors, depth_values
 
 # FORWARD MAPPING - (project from image to texture)
-def forward_mapping_project_pixels(image, intrinsics, extrinsics, width, height):
+def forward_mapping_project_pixels(image, intrinsics, extrinsics, texture_width, texture_height):
     # img size
     h_img, w_img = image.shape[:2]
     
@@ -84,9 +84,9 @@ def forward_mapping_project_pixels(image, intrinsics, extrinsics, width, height)
     d_global = R @ d_local
     d_global = d_global / np.linalg.norm(d_global, axis=0) # Normalizza il vettore della direzione, poi usa d_global per calcolare theta e phi
 
-    # p_global[0] -> X
-    # p_global[1] -> Y
-    # p_global[2] -> Z
+    # d_global[0] -> X
+    # d_global[1] -> Y
+    # d_global[2] -> Z
 
     # compute spherical coords
 
@@ -100,12 +100,12 @@ def forward_mapping_project_pixels(image, intrinsics, extrinsics, width, height)
     # ---- TEST DI NORMALIZZAZIONE
     # IL COD COMMENTATO è QUELLO ORIGINALE - non normalizzato
     '''
-    u_texel = ((theta / (2 * np.pi)) * width).astype(np.int32) % width
-    v_texel = ((1 - (phi + np.pi / 2) / np.pi) * height).astype(np.int32)
+    u_texel = ((theta / (2 * np.pi)) * texture_width).astype(np.int32) % texture_width
+    v_texel = ((1 - (phi + np.pi / 2) / np.pi) * texture_height).astype(np.int32)
     '''
     # COD NUOVO - normalizzato
-    u_texel = ((theta + np.pi) / (2 * np.pi) * width).astype(np.int32) % width
-    v_texel = ((phi + np.pi / 2) / np.pi * height).astype(np.int32)
+    u_texel = ((theta + np.pi) / (2 * np.pi) * texture_width).astype(np.int32) % texture_width
+    v_texel = ((phi + np.pi / 2) / np.pi * texture_height).astype(np.int32)
 
     texel_coords = np.stack([u_texel, v_texel], axis=1)  # (N, 2)
     colors = image[v.ravel(), u.ravel()]
@@ -137,28 +137,38 @@ proiezione inversa (wglobal→wlocal→(u,v)):
                 sin(phi)
                 cos(phi) * sin(theta)]
     Then, w_global is transfomed in local direction w_local with:
-    w_local = R^T * (w_global - t)     
+    w_local = R^T * (w_global)     
 
 3 - project on image plane
     local direction d_local is projected on the image plane using the camera intrinsics:
     d_local = intrinsics * w_local       
+
+4 - Crea una maschera di validità per prendere solo i punti davanti la telecamera
+    valid_mask = d_local[..., 2] > 0
     
-4 - Normalize d_local to obtain image coords (u_image, v_image)
-    check if the projected point is inside the image frame
+5 - Normalize d_local to obtain image coords (u_image, v_image)
+	dividi per Z per ottenere le coordinate immagine (proiezione prospettica)
     u_image = d_local[0] / d_local[2]
     v_image = d_local[1] / d_local[2]
+
+6 - check if the projected point is inside the image frame
+    escludi punti fuori dai bordi - no clipping
+	valid_mask &= (u_image >= 0) & (u_image < image_width)
+    valid_mask &= (v_image >= 0) & (v_image < image_height)
+
+7 - (optional) Do a blending or a z buffer or similar 
 '''
-def inverse_mapping(width, height, extrinsics, intrinsics, image, image_width, image_height, pixel_distances):   
+def inverse_mapping(texture_width, texture_height, extrinsics, intrinsics, image, image_width, image_height, pixel_distances):   
     # griglia di texel (u_texel, v_texel)
-    u_texel, v_texel = np.meshgrid(np.arange(width), np.arange(height))
+    u_texel, v_texel = np.meshgrid(np.arange(texture_width), np.arange(texture_height))
 
     # calcolo di (theta, phi) per ogni texel
-    theta = (u_texel / width) * 2 * np.pi - np.pi
-    phi = (v_texel / height) * np.pi - np.pi / 2
+    theta = (u_texel / texture_width) * 2 * np.pi - np.pi
+    phi = (v_texel / texture_height) * np.pi - np.pi / 2
 
     # direzione globale w_global
     # global directions vector (shape: (height, width, 3))
-    # theh 3 arrays are combined into a single array where each element is a vector of 3 components
+    # the 3 arrays are combined into a single array where each element is a vector of 3 components
     w_global = np.stack([
         np.cos(phi) * np.cos(theta),
         np.sin(phi),
@@ -185,8 +195,8 @@ def inverse_mapping(width, height, extrinsics, intrinsics, image, image_width, i
     valid_mask = d_local[..., 2] > 0  # solo punti davanti alla telecamera
 
     # calcolo di u_image e v_image
-    u_image = np.full((height, width), -1, dtype=np.int32)
-    v_image = np.full((height, width), -1, dtype=np.int32)
+    u_image = np.full((texture_height, texture_width), -1, dtype=np.int32)
+    v_image = np.full((texture_height, texture_width), -1, dtype=np.int32)
 
     # dividi per Z per ottenere le coordinate immagine (proiezione prospettica)
     u_image[valid_mask] = (d_local[valid_mask, 0] / d_local[valid_mask, 2]).astype(int)
@@ -199,22 +209,16 @@ def inverse_mapping(width, height, extrinsics, intrinsics, image, image_width, i
 
     ''''''# se attivo zbuffer
 
-
-
-    #distances = np.linalg.norm(d_local, axis=-1)  # Distanza per ogni pixel proiettato
-    # quasi sicuramente sbaglio qualcosa, tipo il calcolo della distanza deve essere fatto sull'immagine stessa! chissene importa del vettore dlocal
-    # calcolare la distanza tra il punto proiettato e il punto dell'immagine
-
     # colori della texture proiettati
     u_image_valid = u_image[valid_mask]
     v_image_valid = v_image[valid_mask]
 
     # estrai i colori dall'immagine originale per i texel validi
-    colors = np.zeros((height, width, 3), dtype=np.uint8)
+    colors = np.zeros((texture_height, texture_width, 3), dtype=np.uint8)
     colors[valid_mask] = image[v_image_valid, u_image_valid]
 
     # Mappa le distanze dall'immagine originale ai texel validi
-    distances_texture = np.full((height, width), -np.inf)
+    distances_texture = np.full((texture_height, texture_width), -np.inf)
     distances_texture[valid_mask] = pixel_distances[v_image[valid_mask], u_image[valid_mask]]
 
     return colors, valid_mask, distances_texture
