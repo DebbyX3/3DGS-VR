@@ -16,7 +16,7 @@ Fit a depth map on another using a polynomial function
     depth_to_base_on = the depth map used as a reference, on which depth_to_scale will be scaled on
     poly_deg = degree on polynomial
 
-Returns: polynomial coefficients
+Returns: polynomial coefficients, scaled depth map
 '''
 def scale_texture_poly (depth_to_scale, depth_to_base_on, poly_deg):
 
@@ -48,7 +48,14 @@ def scale_texture_poly (depth_to_scale, depth_to_base_on, poly_deg):
     # create a polynomial in the form of:
     # c0 + c1 * x + c2 * x^2 + c3 * x^3 ... + cn * x^n
     # where c0...cn are the coefficients in the same orders that output from poly.polyfit
+
+    #test con pesi
+    #weights = depth_to_base_on_values_clean / depth_to_base_on_values_clean.max()  # Normalizza i pesi
+    #weights[weights == 0] = 1  # Evita divisioni per 0
+
     function_coefs = poly.polyfit(depth_to_scale_values_clean, depth_to_base_on_values_clean, poly_deg) 
+
+    #function_coefs = poly.polyfit(depth_to_scale_values_clean, depth_to_base_on_values_clean, poly_deg, w = weights) 
     print(function_coefs)
 
     function_polynomial = poly.Polynomial(function_coefs)
@@ -57,12 +64,10 @@ def scale_texture_poly (depth_to_scale, depth_to_base_on, poly_deg):
     # apply the fitted function to each value of the depth anything pixel depth map to create a scaled version
     # Applica il polinomio a tutta la depth map in una sola operazione
     scaled_depth_map = poly.polyval(depth_to_scale, function_coefs)
-
     
     plt.imshow(scaled_depth_map, cmap='gray', vmin=0, vmax=255)
     plt.title("Scaled Depth Map")
     plt.show()
-    
 
     # Punti per la curva del polinomio
     x_fit = np.linspace(depth_to_scale_values_clean.min(), depth_to_scale_values_clean.max(), 500)  # Asse X per il polinomio
@@ -79,7 +84,7 @@ def scale_texture_poly (depth_to_scale, depth_to_base_on, poly_deg):
     plt.grid()
     plt.show()
 
-    return function_coefs
+    return function_coefs, scaled_depth_map
 
 # from colmap codebase
 def read_array(path):
@@ -338,10 +343,10 @@ with open(imagesTxt_path, 'r') as f:
                         inverted_depth_da_non_metric = np.invert(depth_da_non_metric)
 
                         # View grayscale from 0 to 255 (test)
-                        #plt.imshow(inverted_depth_da_non_metric, cmap='gray', vmin=0, vmax=255)
-                        #plt.title("Depth Anything NON metric (inverted)")
-                        #plt.axis('off')
-                        #plt.show()
+                        plt.imshow(inverted_depth_da_non_metric, cmap='gray', vmin=0, vmax=255)
+                        plt.title("Depth Anything NON metric (inverted)")
+                        plt.axis('off')
+                        plt.show()
 
                         # ---- Read depth anything v2 (da) depth map - METRIC version
                         # Grayscale image from 0 to 255, where, originally, the LOWER the color value, the CLOSER the pixel is
@@ -353,10 +358,10 @@ with open(imagesTxt_path, 'r') as f:
                         depth_da_metric = np.load(depth_map_da_metric_path)
 
                         # View grayscale from 0 to 255 (test)
-                        plt.imshow(depth_da_metric, cmap='gray', vmin=0, vmax=255)
-                        plt.title("Depth Anything METRIC")
-                        plt.axis('off')
-                        plt.show()
+                        #plt.imshow(depth_da_metric, cmap='gray', vmin=0, vmax=255)
+                        #plt.title("Depth Anything METRIC")
+                        #plt.axis('off')
+                        #plt.show()
 
                         # ----------- FIND A FUNCTION
                         '''
@@ -376,10 +381,46 @@ with open(imagesTxt_path, 'r') as f:
                         '''
 
                         # ------------------- TEST 1: con depth DA non metriche
-                        scale_texture_poly(inverted_depth_da_non_metric, depth_colmap, 3)
+                        #_, scaled_depth_map = scale_texture_poly(inverted_depth_da_non_metric, depth_colmap, 3)
                         
                         # ------------------- TEST 2: Con depth DA metriche
-                        #scale_texture_poly(depth_da_metric, depth_colmap, 3)
+                        #_, scaled_depth_map = scale_texture_poly(depth_da_metric, depth_colmap, 3)
+
+                        # ------------------- TEST 3: Applica filtro mediana su ogni regione
+                        ''' 
+                        Perchè lo facciamo?
+                        La depth di colmap è rumorosa. Ha un sacco di outlier in giro e dei buchi. Quello che voglio fare con questo
+                        metodo è cercare di riempire i buchi in modo sensato, senza danneggiare la mappa.
+                        Spero di ottenere questo e in più:
+                        - una mappa più smooth e che abbia senso
+                        - una mappa che poi posso fittare rispetto a quella di DA
+                        - una mappa con i buchi 'piccoli' coperti, mentre con i buchi grandi no
+                            - i buchi grandi sono il cielo e cose lontane. Se dopo questo procedimento (che posso applicare anche 2 volte?)
+                              rimangono grandi buchi, allora posso dire che questi sono il cielo o oggetti lontani! 
+                              Posso quindi artificialmente metterli a un valore molto alto?
+                        
+                        procedimento:
+                        - Prendi depth di DA non metrica, quindi con valori da 0 a 255
+                        - Individua dei bucket di valori in questa mappa. Tipo, crea dei bucket ogni 10 valori, quindi 0-10, 10-20 etc...
+                            - Magari, più avanti, si può fare un'analisi dei valori/dell'istogramma dei valori per fare dei bucket più sensati. 
+                              Per es, se ho l'img che è tutta chiara e poco scura, allora il bucket dei chiari è più grande di quello degli scuri
+                        - Per ogni bucket, cerca nella depth di DA le coordinate corrispondenti.
+                        - Prendi le stesse coordinate, e considera solo quelle lì nella mappa di colmap. Di fatto guardo il valore in colmap negli stessi punti 
+                            - Faccio così perchè voglio trovare in colmap le aree di profondità circa simili che mi dice DA, 
+                              visto che è molto bravo a fare una segmentazione per depth
+                        - Quando sono passata ai punti colmap, che ricordo essere solo quelli della regione del bucket di DA, cerco la depth + frequente (moda)
+                        - Crea un'immagine/matrice da 0 della stessa dimensione, e riempila con i valori della moda
+                        - Prendi i punti della regione trovata in colmap, e sostituiscili in questa nuova img.
+                          Alla fine l'idea è avere una immagine/matrice con lo sfondo di moda e la regione con i valori delle depth di colmap per quel bucket
+                        - Passa su questa matrice/img un filtro mediana, al quale do una certa finestra, che potrebbe essere anche variabile
+                            - In alternativa, per non sprecare tempo a fare il filtro su tutta l'img nuova, posso farlo solo sulla regione, ma devo gestire bene 
+                              i casi con gli edge. Inoltre, devo probabilmente scrivere da 0 una cosa del genere, mentre filtro mediana lo trovo in qualche lib
+                            - tipo uso sempre l'idea di fare come sfondo e applico il filtro solo sulla maschera
+                        - In più, posso calcolare dev std nei valori della finestra e setto una threshold (tipo 20). 
+                          Se la thresh è 20 o meno, allora non filtro in quella finestra e vado avanti
+                            - Questo lo faccio per evitare di piallare completamente zone abbastanza 'grandi' che invece vorrei tenere
+                        '''
+
 
                         
                         # ----------- IMAGE
