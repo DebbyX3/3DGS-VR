@@ -177,8 +177,8 @@ with open(cameraTxt_path, 'r') as f:
             # SIMPLE_RADIAL: fx (fx = fy), cx, cy, k1   1 focal length, principal point and radial distortion
             # RADIAL: fx (fx = fy), cx, cy, k1, k2      1 focal lengths, principal point and 2 radial distortions
 
-            texture_width = int(single_camera_info[2])
-            texture_height = int(single_camera_info[3])
+            camera_width = int(single_camera_info[2])
+            camera_height = int(single_camera_info[3])
 
             if single_camera_info[1] == "SIMPLE_PINHOLE":
                 fx = float(single_camera_info[4])
@@ -215,8 +215,8 @@ intrinsic_matrix = np.array([[fx, 0, cx],
                              [0, 0, 1]])
 
 print("--- Camera: ", camera_info[0][1])
-print(" Width: ", texture_width)
-print(" Height: ", texture_height)
+print(" Width: ", camera_width)
+print(" Height: ", camera_height)
 print(" fx: ", fx)
 print(" fy: ", fy)
 print(" cx: ", cx)
@@ -228,7 +228,7 @@ if 'k2' in locals():
     print(" k2: ", k2)
 
 #intrinsics = o3d.camera.PinholeCameraIntrinsic(width, height, fx, fy, cx, cy) #alternatively
-intrinsics = o3d.camera.PinholeCameraIntrinsic(texture_width, texture_height, intrinsic_matrix)
+intrinsics = o3d.camera.PinholeCameraIntrinsic(camera_width, camera_height, intrinsic_matrix)
 
 # ************************** EXTRACT EXTRINSICS FROM IMAGES.TXT FILE **************************
 # Extrinsic matrix:
@@ -427,7 +427,7 @@ with open(imagesTxt_path, 'r') as f:
                           Se la thresh è 20 o meno, allora non filtro in quella finestra e vado avanti
                             - Questo lo faccio per evitare di piallare completamente zone abbastanza 'grandi' che invece vorrei tenere
                         '''
-
+                        
                         bucket_step = 10
                         min_bucket = 0
                         max_bucket = 0
