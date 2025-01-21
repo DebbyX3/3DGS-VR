@@ -132,6 +132,7 @@ imgs_folder = "../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1cam
 depth_map_colmap_folder = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/stereo/depth_maps'
 depth_map_da_non_metric_folder = '../depth-anything-estimations/non-metric_depths/cavignal_fountain'
 depth_map_da_metric_folder = '../depth-anything-estimations/metric_depths/cavignal-fountain_pinhole_1camera'
+depth_maps_from_3DPoints = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/depth_maps_from_3DPoints'
 
 # ************************** EXTRACT INTRINSICS FROM CAMERA.TXT FILE **************************
 # Intrinsics matrix:
@@ -243,7 +244,7 @@ texture_width, texture_height = 2048, 1024
 # LOOP INFO
 count = 0
 count_imgs = 0
-cameras_info = []
+images_info = []
 cameras_extrinsics = []
 # Read 1 image every 'skip'
 # e.g. If I have 10 imgs and skip = 3, read images:
@@ -268,19 +269,19 @@ with open(imagesTxt_path, 'r') as f:
                         print("--- Img num ", (count_imgs/skip)/2 if skip %2 != 0 else count_imgs/skip)
                         print("Count: ", count)
 
-                        single_camera_info = line.split() # split every field in line
-                        cameras_info.append(single_camera_info) # and store them as separate fields as list in a list ( [ [] ] )
+                        single_image_info = line.split() # split every field in line
+                        images_info.append(single_image_info) # and store them as separate fields as list in a list ( [ [] ] )
 
                         # Images info contains:
                         # IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
                         # 0         1   2   3   4   5   6   7   8          9
 
                         # CREATE ROTATION MATRIX 'R' FROM QUATERNIONS
-                        quaternions = np.array([single_camera_info[1], single_camera_info[2], single_camera_info[3], single_camera_info[4]]) # numpy array
+                        quaternions = np.array([single_image_info[1], single_image_info[2], single_image_info[3], single_image_info[4]]) # numpy array
                         rotation_matrix = o3d.geometry.get_rotation_matrix_from_quaternion(quaternions)
 
                         # CREATE TRANSLATION VECTOR T
-                        translation = np.array([single_camera_info[5], single_camera_info[6], single_camera_info[7]], dtype = float)
+                        translation = np.array([single_image_info[5], single_image_info[6], single_image_info[7]], dtype = float)
 
                         # CREATE EXTRINSICS MATRIX                
                         extrinsics_matrix = np.vstack([np.hstack([rotation_matrix, translation.reshape(3, 1)]), 
@@ -296,7 +297,7 @@ with open(imagesTxt_path, 'r') as f:
                         rotation_trans_inv = (-1) * rotation_transpose
 
                         # CREATE TRANSLATION VECTOR T
-                        translation = np.array([single_camera_info[5], single_camera_info[6], single_camera_info[7]], dtype = float)
+                        translation = np.array([single_image_info[5], single_image_info[6], single_image_info[7]], dtype = float)
 
                         # DOT PRODUCT (*) BETWEEN INVERTED_R_TRANSPOSED (-R^t) AND TRANSLATION VECTOR (T)
                         # TO FIND CAMERA CENTER
@@ -312,7 +313,7 @@ with open(imagesTxt_path, 'r') as f:
                         # The LOWER the pixel value is, the CLOSER the pixel is to the camera 
 
                         # Take the image file name
-                        img_filename = single_camera_info[9]
+                        img_filename = single_image_info[9]
 
                         # ---- Read colmap depth map
                         # Numpy array with relative values, where the LOWER the value, the CLOSER the pixel is to the camera
