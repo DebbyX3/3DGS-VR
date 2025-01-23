@@ -15,11 +15,13 @@ import scipy
 Fit a depth map on another using a polynomial function
     depth_to_scale = the depth_map to scale/fit
     depth_to_base_on = the depth map used as a reference, on which depth_to_scale will be scaled on
+    label_depth_to_scale = label to use in the scatter plot to name the depth_map to scale/fit
+    label_depth_to_base_on = label to use in the scatter plot to name the depth map used as a reference
     poly_deg = degree on polynomial
 
 Returns: polynomial coefficients, scaled depth map
 '''
-def scale_texture_poly (depth_to_scale, depth_to_base_on, poly_deg):
+def scale_texture_poly (depth_to_scale, depth_to_base_on, label_depth_to_scale, label_depth_to_base_on, poly_deg):
 
     # ---- Flatten
     depth_to_scale_flat = depth_to_scale.flatten()
@@ -77,15 +79,241 @@ def scale_texture_poly (depth_to_scale, depth_to_base_on, poly_deg):
     # Plot
     plt.figure(figsize=(8, 6))
     plt.scatter(depth_to_scale_values_clean, depth_to_base_on_values_clean, color='blue', s=1, alpha=0.5, label='Dati Originali')
-    plt.plot(x_fit, y_fit, color='red', linewidth=2, label=f'Polinomio di grado 3')
-    plt.xlabel("Depth Anything (DA) Values")
-    plt.ylabel("Colmap Values")
-    plt.title("Fitting Polinomiale tra DA e Colmap")
+    plt.plot(x_fit, y_fit, color='red', linewidth=2, label=f'Polynomial of degree {poly_deg}')
+    plt.xlabel(label_depth_to_scale)
+    plt.ylabel(label_depth_to_base_on)
+    plt.title("Polyfit scatter plot")
     plt.legend()
     plt.grid()
     plt.show()
 
     return function_coefs, scaled_depth_map
+
+def median_processing():
+    '''
+    - The Depth Anything (DA) map is dense/complete, but it does not have scaled or 'real' (not metric) values
+    - The Colmap map has scaled and 'real' (not metric) values, but is not complete: lots of point have 0 as 
+        depth because the method is unable to estimate it
+
+    So, we want to perform a scale: scale the DA map in the reference system of the colmap map using 
+    a function, that we try to fit as a polynomial on the colmap map. We should exclude the '0' points that
+    are not useful in the colmap map, and, similarly, exclude the same points in the DA map to avoid creating
+    a wrong fitted function.
+    At the end, we should apply the final function to the DA map and obtain a complete and scaled depth map.
+    Please note that we may need to find a function different FOR EACH image, since the DA maps are not consistent 
+    when generated from independent frames.
+    However, we can try to generate the depths using the 'video' method that depth anyting provides. 
+    Maybe in this way we can avoid finding a function for each frame, and just have one fitted function
+    '''
+
+    # ------------------- TEST 1: con depth DA non metriche
+    #_, scaled_depth_map = scale_texture_poly(inverted_depth_da_non_metric, depth_colmap, "DA non-metric", "Colmap", 3)
+    
+    # ------------------- TEST 2: Con depth DA metriche
+    #_, scaled_depth_map = scale_texture_poly(depth_da_metric, depth_colmap, "DA metric", "Colmap", 3)
+
+    # ------------------- TEST 3: Applica filtro mediana su ogni regione
+    ''' 
+    Perchè lo facciamo?
+    La depth di colmap è rumorosa. Ha un sacco di outlier in giro e dei buchi. Quello che voglio fare con questo
+    metodo è cercare di riempire i buchi in modo sensato, senza danneggiare la mappa.
+    Spero di ottenere questo e in più:
+    - una mappa più smooth e che abbia senso
+    - una mappa che poi posso fittare rispetto a quella di DA
+    - una mappa con i buchi 'piccoli' coperti, mentre con i buchi grandi no
+        - i buchi grandi sono il cielo e cose lontane. Se dopo questo procedimento (che posso applicare anche 2 volte?)
+            rimangono grandi buchi, allora posso dire che questi sono il cielo o oggetti lontani? 
+            Posso quindi artificialmente metterli a un valore molto alto?
+
+    procedimento
+    - Prendi depth di DA non metrica, quindi con valori da 0 a 255
+    - Individua dei bucket di valori in questa mappa. Tipo, crea dei bucket ogni 10 valori, quindi 0-10, 10-20 etc...
+        - Magari, più avanti, si può fare un'analisi dei valori/dell'istogramma dei valori per fare dei bucket più sensati. 
+            Per es, se ho l'img che è tutta chiara e poco scura, allora il bucket dei chiari è più grande di quello degli scuri
+    - Per ogni bucket, cerca nella depth di DA le coordinate corrispondenti. 
+        - Nota che se siamo nello stesso bucket, è perchè allora i punti dovrebbero avere depth simili!
+    - Prendi le stesse coordinate, e considera solo quelle lì nella mappa di colmap. Di fatto guardo il valore in colmap negli stessi punti 
+        - Faccio così perchè voglio trovare in colmap le aree di profondità circa simili che mi dice DA, 
+            visto che è molto bravo a fare una segmentazione per depth
+    - Quando sono passata ai punti colmap, che ricordo essere solo quelli della regione del bucket di DA, cerco la depth + frequente (moda)
+    - Crea un'immagine/matrice da 0 della stessa dimensione, e riempila con i valori della moda
+    - Prendi i punti della regione trovata in colmap, e sostituiscili in questa nuova img.
+        Alla fine l'idea è avere una immagine/matrice con lo sfondo di moda e la regione con i valori delle depth di colmap per quel bucket
+    - Passa su questa matrice/img un filtro mediana, al quale do una certa finestra, che potrebbe essere anche variabile
+        - In alternativa, per non sprecare tempo a fare il filtro su tutta l'img nuova, posso farlo solo sulla regione, ma devo gestire bene 
+            i casi con gli edge. Inoltre, devo probabilmente scrivere da 0 una cosa del genere, mentre filtro mediana lo trovo in qualche lib
+        - tipo uso sempre l'idea di fare come sfondo e applico il filtro solo sulla maschera
+    - In più, posso calcolare dev std nei valori della finestra e setto una threshold (tipo 20). 
+        Se la thresh è 20 o meno, allora non filtro in quella finestra e vado avanti
+        - Questo lo faccio per evitare di piallare completamente zone abbastanza 'grandi' che invece vorrei tenere
+    '''
+    
+    bucket_step = 10
+    min_bucket = 0
+    max_bucket = 0
+
+    h_img, w_img = depth_colmap.shape[:2]
+    median_filtered_depth_map = np.zeros((h_img, w_img))
+    
+    while max_bucket < 255:
+        # Compute new buckets each loop
+        min_bucket = max_bucket
+        max_bucket = max_bucket + bucket_step
+
+        # If the max exceedes the limit, make it the limit
+        if max_bucket > 255:
+            max_bucket = 255
+
+        print("Bucket range: ", min_bucket, max_bucket)
+
+        # Extract indexes of the corresponding values between the bucket range in the DA map
+        # This creates a 'mask'
+        da_masked_indexes = np.where((inverted_depth_da_non_metric >= min_bucket) & \
+                                        (inverted_depth_da_non_metric < max_bucket))
+
+        # Extract the values of the same indexes/coords in the colmap map
+        colmap_masked_values = depth_colmap[da_masked_indexes]
+
+        # Find the most frequent value (mode)
+        # varianti:
+        # 1- Trova moda e basta
+        # 2- Trova moda togliendo gli 0
+        # 3- Trova moda togliendo gli 0 e arrotondando a 1 o 2 cifre dec
+        # 4- Trova moda arrotondando a 1 o 2 cifre dec
+        # 5- Trova mediana?
+        # (s-commenta variante che uso)
+
+        # --- Variante 1 - Trova moda e basta
+        '''
+        # find unique values in array along with their counts
+        vals, counts = np.unique(colmap_masked_values, return_counts=True)
+
+        # find mode index
+        mode_index = np.argwhere(counts == np.max(counts))
+
+        # print list of modes
+        mode_values = vals[mode_index].flatten().tolist()
+
+        # find how often mode occurs
+        mode_frequency = np.max(counts)
+        '''
+        
+        # --- Variante 2 - Trova moda togliendo gli 0
+        '''
+        # remove zeros 
+        colmap_masked_values_zero_indexes = np.where(colmap_masked_values == 0)
+        colmap_masked_values_no_zeros = np.delete(colmap_masked_values, colmap_masked_values_zero_indexes)
+
+        # find unique values in array along with their counts
+        vals, counts = np.unique(colmap_masked_values_no_zeros, return_counts=True)
+
+        # find mode index
+        mode_index = np.argwhere(counts == np.max(counts))
+
+        # print list of modes
+        mode_values = vals[mode_index].flatten().tolist()
+
+        # find how often mode occurs
+        mode_frequency = np.max(counts)
+
+        print("mode: ", mode_values)
+        print("mode freq: ", mode_frequency)
+        '''
+
+        # --- Variante 3 - Trova moda togliendo gli 0 e arrotondando a 1 o 2 cifre dec
+        
+        # remove zeros 
+        colmap_masked_values_zero_indexes = np.where(colmap_masked_values == 0)
+        colmap_masked_values_no_zeros = np.delete(colmap_masked_values, colmap_masked_values_zero_indexes)
+
+        # arrotonda a 2 cifre dec
+        colmap_masked_values_no_zeros_round = np.round(colmap_masked_values_no_zeros, decimals = 2)
+
+        # find unique values in array along with their counts
+        vals, counts = np.unique(colmap_masked_values_no_zeros_round, return_counts=True)
+
+        # find mode index
+        mode_index = np.argwhere(counts == np.max(counts))
+
+        # print list of modes
+        mode_values = list(vals[mode_index].flatten())
+
+        # find how often mode occurs
+        mode_frequency = np.max(counts)
+
+        print("mode: ", mode_values)
+        print("mode freq: ", mode_frequency)
+        
+
+        # --- Variante 4 - Trova moda arrotondando a 1 o 2 cifre dec
+        '''
+        # arrotonda a 2 cifre dec
+        colmap_masked_values_round = np.round(colmap_masked_values, decimals = 2)
+
+        # find unique values in array along with their counts
+        vals, counts = np.unique(colmap_masked_values_round, return_counts=True)
+
+        # find mode index
+        mode_index = np.argwhere(counts == np.max(counts))
+
+        # print list of modes
+        mode_values = list(vals[mode_index].flatten())
+
+        # find how often mode occurs
+        mode_frequency = np.max(counts)
+
+        print("mode: ", mode_values)
+        print("mode freq: ", mode_frequency)
+        '''
+
+        # --- crea immagine con stessa dim di depth colmap e riempi con moda
+        h_img, w_img = depth_colmap.shape[:2]
+        img_to_filter = np.full((h_img, w_img), mode_values[0])
+        # fill img with colmap mask
+        img_to_filter[da_masked_indexes] = colmap_masked_values
+
+        '''
+        plt.figure()
+        plt.imshow(img_to_filter, cmap='viridis', vmin=0, vmax=255)
+        plt.title("Img to filter - mode as background + mask with colmap vals in bucket")
+        plt.axis('off')
+        plt.show()
+        '''
+
+        # --- passa filtro mediana su questa immagine
+        current_img_median_filtered = scipy.signal.medfilt2d(img_to_filter, kernel_size = 31)
+
+        '''
+        plt.figure()
+        plt.imshow(img_median_filtered, cmap='viridis', vmin=0, vmax=255)
+        plt.title("Img median filtered")
+        plt.axis('off')
+        plt.show()         
+        '''   
+
+        # --- prendi i valori corrispondenti alle coord della maschera nell'immagine filtrata e salvali nella depth map finale 
+        median_filtered_depth_map[da_masked_indexes] = current_img_median_filtered[da_masked_indexes]      
+
+    plt.figure()
+    plt.imshow(median_filtered_depth_map, cmap='viridis', vmin=0, vmax=255)
+    plt.title("Median filtered depth map")
+    plt.axis('off')
+    plt.show()  
+
+    _, fitted_depth_map = scale_texture_poly(inverted_depth_da_non_metric, median_filtered_depth_map, "DA non-metric", "Median filtered map (DA non-metric + colmap)", 3)
+
+    # --- Cambia nella mappa con mediana i valori = 0 con quelli usciti dal fitting
+    # cerca indici valori 0
+    median_filtered_depth_map_zero_indexes = np.where(median_filtered_depth_map == 0)
+    # sostituisci gli indici con i valori della fitted
+    final_depth_map = median_filtered_depth_map
+    final_depth_map[median_filtered_depth_map_zero_indexes] = fitted_depth_map[median_filtered_depth_map_zero_indexes]
+
+    plt.figure()
+    plt.imshow(final_depth_map, cmap='viridis', vmin=0, vmax=255)
+    plt.title("Final depth map")
+    plt.axis('off')
+    plt.show()  
 
 # from colmap codebase
 def read_array(path):
@@ -132,7 +360,7 @@ imgs_folder = "../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1cam
 depth_map_colmap_folder = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/stereo/depth_maps'
 depth_map_da_non_metric_folder = '../depth-anything-estimations/non-metric_depths/cavignal_fountain'
 depth_map_da_metric_folder = '../depth-anything-estimations/metric_depths/cavignal-fountain_pinhole_1camera'
-depth_maps_from_3DPoints = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/depth_maps_from_3DPoints'
+depth_map_from_3DPoints_folder = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/depth_maps_from_3DPoints'
 
 # ************************** EXTRACT INTRINSICS FROM CAMERA.TXT FILE **************************
 # Intrinsics matrix:
@@ -353,8 +581,9 @@ with open(imagesTxt_path, 'r') as f:
                         plt.show(block=False)
 
                         # ---- Read depth anything v2 (da) depth map - METRIC version
-                        # Grayscale image from 0 to 255, where, originally, the LOWER the color value, the CLOSER the pixel is
-                        # The image is just a representation of the values normalized. 
+                        # Numpy array where each pixel is the metric distance from the camera to the real point (estimated)
+                        # the LOWER the metric value, the CLOSER the pixel is
+                        # There's also the image version, but is just a representation of the values normalized. 
                         # Instead, we have to use the numpy matrix generated by the metric estimation
                         '''
                         depth_map_da_metric_filename = Path(img_filename).stem + "_raw_depth_meter.npy" # (remove file extension)
@@ -370,231 +599,32 @@ with open(imagesTxt_path, 'r') as f:
                         plt.show(block=False)
                         '''
 
+                        # ---- Read depth map generated from TRUE 3D points by colmap (assembled by us)
+                        # Numpy array generated from the 3D point processing of colmap to find ONLY the depth of points correctly estimated 
+                        # by the feature matching of colmap
+                        # The LOWER the value, the CLOSER the pixel is
+
+                        depth_map_from_3DPoints_filename = img_filename + "_depth.npy"
+                        depth_map_from_3DPoints_path = os.path.join(depth_map_from_3DPoints_folder, depth_map_from_3DPoints_filename)
+
+                        depth_from_3DPoints = np.load(depth_map_from_3DPoints_path)
+
+                        # View map from 0 to 255 (test)
+                        plt.figure()
+                        plt.imshow(depth_from_3DPoints, cmap='viridis')
+                        plt.title(f"Depth Map from 3D points: " + img_filename + "_depth.npy")
+                        plt.axis('off')
+                        plt.show()
+
                         # ----------- FIND A FUNCTION
-                        '''
-                        - The Depth Anything (DA) map is dense/complete, but it does not have scaled or 'real' (not metric) values
-                        - The Colmap map has scaled and 'real' (not metric) values, but is not complete: lots of point have 0 as 
-                          depth because the method is unable to estimate it
-
-                        So, we want to perform a scale: scale the DA map in the reference system of the colmap map using 
-                        a function, that we try to fit as a polynomial on the colmap map. We should exclude the '0' points that
-                        are not useful in the colmap map, and, similarly, exclude the same points in the DA map to avoid creating
-                        a wrong fitted function.
-                        At the end, we should apply the final function to the DA map and obtain a complete and scaled depth map.
-                        Please note that we may need to find a function different FOR EACH image, since the DA maps are not consistent 
-                        when generated from independent frames.
-                        However, we can try to generate the depths using the 'video' method that depth anyting provides. 
-                        Maybe in this way we can avoid finding a function for each frame, and just have one fitted function
-                        '''
-
-                        # ------------------- TEST 1: con depth DA non metriche
-                        #_, scaled_depth_map = scale_texture_poly(inverted_depth_da_non_metric, depth_colmap, 3)
                         
-                        # ------------------- TEST 2: Con depth DA metriche
-                        #_, scaled_depth_map = scale_texture_poly(depth_da_metric, depth_colmap, 3)
+                        # test using a median filter to adapt the whole colmap texture to the DA one (keep commented)
+                        #median_processing() 
 
-                        # ------------------- TEST 3: Applica filtro mediana su ogni regione
-                        ''' 
-                        Perchè lo facciamo?
-                        La depth di colmap è rumorosa. Ha un sacco di outlier in giro e dei buchi. Quello che voglio fare con questo
-                        metodo è cercare di riempire i buchi in modo sensato, senza danneggiare la mappa.
-                        Spero di ottenere questo e in più:
-                        - una mappa più smooth e che abbia senso
-                        - una mappa che poi posso fittare rispetto a quella di DA
-                        - una mappa con i buchi 'piccoli' coperti, mentre con i buchi grandi no
-                            - i buchi grandi sono il cielo e cose lontane. Se dopo questo procedimento (che posso applicare anche 2 volte?)
-                              rimangono grandi buchi, allora posso dire che questi sono il cielo o oggetti lontani? 
-                              Posso quindi artificialmente metterli a un valore molto alto?
-                    
-                        procedimento
-                        - Prendi depth di DA non metrica, quindi con valori da 0 a 255
-                        - Individua dei bucket di valori in questa mappa. Tipo, crea dei bucket ogni 10 valori, quindi 0-10, 10-20 etc...
-                            - Magari, più avanti, si può fare un'analisi dei valori/dell'istogramma dei valori per fare dei bucket più sensati. 
-                              Per es, se ho l'img che è tutta chiara e poco scura, allora il bucket dei chiari è più grande di quello degli scuri
-                        - Per ogni bucket, cerca nella depth di DA le coordinate corrispondenti. 
-                            - Nota che se siamo nello stesso bucket, è perchè allora i punti dovrebbero avere depth simili!
-                        - Prendi le stesse coordinate, e considera solo quelle lì nella mappa di colmap. Di fatto guardo il valore in colmap negli stessi punti 
-                            - Faccio così perchè voglio trovare in colmap le aree di profondità circa simili che mi dice DA, 
-                              visto che è molto bravo a fare una segmentazione per depth
-                        - Quando sono passata ai punti colmap, che ricordo essere solo quelli della regione del bucket di DA, cerco la depth + frequente (moda)
-                        - Crea un'immagine/matrice da 0 della stessa dimensione, e riempila con i valori della moda
-                        - Prendi i punti della regione trovata in colmap, e sostituiscili in questa nuova img.
-                          Alla fine l'idea è avere una immagine/matrice con lo sfondo di moda e la regione con i valori delle depth di colmap per quel bucket
-                        - Passa su questa matrice/img un filtro mediana, al quale do una certa finestra, che potrebbe essere anche variabile
-                            - In alternativa, per non sprecare tempo a fare il filtro su tutta l'img nuova, posso farlo solo sulla regione, ma devo gestire bene 
-                              i casi con gli edge. Inoltre, devo probabilmente scrivere da 0 una cosa del genere, mentre filtro mediana lo trovo in qualche lib
-                            - tipo uso sempre l'idea di fare come sfondo e applico il filtro solo sulla maschera
-                        - In più, posso calcolare dev std nei valori della finestra e setto una threshold (tipo 20). 
-                          Se la thresh è 20 o meno, allora non filtro in quella finestra e vado avanti
-                            - Questo lo faccio per evitare di piallare completamente zone abbastanza 'grandi' che invece vorrei tenere
-                        '''
-                        
-                        bucket_step = 10
-                        min_bucket = 0
-                        max_bucket = 0
+                        # find a fitting function and scale the non-metric DA depth map on the true-3d-points depth map
+                        fitted_depth_map = scale_texture_poly(inverted_depth_da_non_metric, depth_from_3DPoints, "DA non-metric", "From 3D true points", 3)
 
-                        h_img, w_img = depth_colmap.shape[:2]
-                        median_filtered_depth_map = np.zeros((h_img, w_img))
-                        
-                        while max_bucket < 255:
-                            # Compute new buckets each loop
-                            min_bucket = max_bucket
-                            max_bucket = max_bucket + bucket_step
 
-                            # If the max exceedes the limit, make it the limit
-                            if max_bucket > 255:
-                                max_bucket = 255
-
-                            print("Bucket range: ", min_bucket, max_bucket)
-
-                            # Extract indexes of the corresponding values between the bucket range in the DA map
-                            # This creates a 'mask'
-                            da_masked_indexes = np.where((inverted_depth_da_non_metric >= min_bucket) & \
-                                                           (inverted_depth_da_non_metric < max_bucket))
-
-                            # Extract the values of the same indexes/coords in the colmap map
-                            colmap_masked_values = depth_colmap[da_masked_indexes]
-
-                            # Find the most frequent value (mode)
-                            # varianti:
-                            # 1- Trova moda e basta
-                            # 2- Trova moda togliendo gli 0
-                            # 3- Trova moda togliendo gli 0 e arrotondando a 1 o 2 cifre dec
-                            # 4- Trova moda arrotondando a 1 o 2 cifre dec
-                            # 5- Trova mediana?
-                            # (s-commenta variante che uso)
-
-                            # --- Variante 1 - Trova moda e basta
-                            '''
-                            # find unique values in array along with their counts
-                            vals, counts = np.unique(colmap_masked_values, return_counts=True)
-
-                            # find mode index
-                            mode_index = np.argwhere(counts == np.max(counts))
-
-                            # print list of modes
-                            mode_values = vals[mode_index].flatten().tolist()
-
-                            # find how often mode occurs
-                            mode_frequency = np.max(counts)
-                            '''
-                            
-                            # --- Variante 2 - Trova moda togliendo gli 0
-                            '''
-                            # remove zeros 
-                            colmap_masked_values_zero_indexes = np.where(colmap_masked_values == 0)
-                            colmap_masked_values_no_zeros = np.delete(colmap_masked_values, colmap_masked_values_zero_indexes)
-
-                            # find unique values in array along with their counts
-                            vals, counts = np.unique(colmap_masked_values_no_zeros, return_counts=True)
-
-                            # find mode index
-                            mode_index = np.argwhere(counts == np.max(counts))
-
-                            # print list of modes
-                            mode_values = vals[mode_index].flatten().tolist()
-
-                            # find how often mode occurs
-                            mode_frequency = np.max(counts)
-
-                            print("mode: ", mode_values)
-                            print("mode freq: ", mode_frequency)
-                            '''
-
-                            # --- Variante 3 - Trova moda togliendo gli 0 e arrotondando a 1 o 2 cifre dec
-                            
-                            # remove zeros 
-                            colmap_masked_values_zero_indexes = np.where(colmap_masked_values == 0)
-                            colmap_masked_values_no_zeros = np.delete(colmap_masked_values, colmap_masked_values_zero_indexes)
-
-                            # arrotonda a 2 cifre dec
-                            colmap_masked_values_no_zeros_round = np.round(colmap_masked_values_no_zeros, decimals = 2)
-
-                            # find unique values in array along with their counts
-                            vals, counts = np.unique(colmap_masked_values_no_zeros_round, return_counts=True)
-
-                            # find mode index
-                            mode_index = np.argwhere(counts == np.max(counts))
-
-                            # print list of modes
-                            mode_values = list(vals[mode_index].flatten())
-
-                            # find how often mode occurs
-                            mode_frequency = np.max(counts)
-
-                            print("mode: ", mode_values)
-                            print("mode freq: ", mode_frequency)
-                            
-
-                            # --- Variante 4 - Trova moda arrotondando a 1 o 2 cifre dec
-                            '''
-                            # arrotonda a 2 cifre dec
-                            colmap_masked_values_round = np.round(colmap_masked_values, decimals = 2)
-
-                            # find unique values in array along with their counts
-                            vals, counts = np.unique(colmap_masked_values_round, return_counts=True)
-
-                            # find mode index
-                            mode_index = np.argwhere(counts == np.max(counts))
-
-                            # print list of modes
-                            mode_values = list(vals[mode_index].flatten())
-
-                            # find how often mode occurs
-                            mode_frequency = np.max(counts)
-
-                            print("mode: ", mode_values)
-                            print("mode freq: ", mode_frequency)
-                            '''
-
-                            # --- crea immagine con stessa dim di depth colmap e riempi con moda
-                            h_img, w_img = depth_colmap.shape[:2]
-                            img_to_filter = np.full((h_img, w_img), mode_values[0])
-                            # fill img with colmap mask
-                            img_to_filter[da_masked_indexes] = colmap_masked_values
-
-                            '''
-                            plt.figure()
-                            plt.imshow(img_to_filter, cmap='viridis', vmin=0, vmax=255)
-                            plt.title("Img to filter - mode as background + mask with colmap vals in bucket")
-                            plt.axis('off')
-                            plt.show()
-                            '''
-
-                            # --- passa filtro mediana su questa immagine
-                            current_img_median_filtered = scipy.signal.medfilt2d(img_to_filter, kernel_size = 31)
-
-                            '''
-                            plt.figure()
-                            plt.imshow(img_median_filtered, cmap='viridis', vmin=0, vmax=255)
-                            plt.title("Img median filtered")
-                            plt.axis('off')
-                            plt.show()         
-                            '''   
-
-                            # --- prendi i valori corrispondenti alle coord della maschera nell'immagine filtrata e salvali nella depth map finale 
-                            median_filtered_depth_map[da_masked_indexes] = current_img_median_filtered[da_masked_indexes]      
-
-                        plt.figure()
-                        plt.imshow(median_filtered_depth_map, cmap='viridis', vmin=0, vmax=255)
-                        plt.title("Median filtered depth map")
-                        plt.axis('off')
-                        plt.show()  
-
-                        _, fitted_depth_map = scale_texture_poly(inverted_depth_da_non_metric, median_filtered_depth_map, 3)
-
-                        # --- Cambia nella mappa con mediana i valori = 0 con quelli usciti dal fitting
-                        # cerca indici valori 0
-                        median_filtered_depth_map_zero_indexes = np.where(median_filtered_depth_map == 0)
-                        # sostituisci gli indici con i valori della fitted
-                        final_depth_map = median_filtered_depth_map
-                        final_depth_map[median_filtered_depth_map_zero_indexes] = fitted_depth_map[median_filtered_depth_map_zero_indexes]
-
-                        plt.figure()
-                        plt.imshow(final_depth_map, cmap='viridis', vmin=0, vmax=255)
-                        plt.title("Final depth map")
-                        plt.axis('off')
-                        plt.show()  
 
                         # ----------- IMAGE
 
