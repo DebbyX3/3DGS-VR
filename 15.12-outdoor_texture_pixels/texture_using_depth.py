@@ -39,6 +39,7 @@ def scale_texture_poly (depth_to_scale, depth_to_base_on, label_depth_to_scale, 
     # y = colmap to base on clean vals
     # deg = poly_deg
 
+    # ATTENZIONE: IL POLYFIT CHE STO USANDO QUI E' QUELLO NUOVO DI PYTHON!
     # NOTA: MEGLIO USARE poly.polyfit E NON poly.Polynomial.fit, perchè 'fit' 
     # sono scalati con un linear mapping (not sure what it means), quindi per avere i coeff nell'unscaled data domain
     # bisogna fare .convert():
@@ -55,28 +56,54 @@ def scale_texture_poly (depth_to_scale, depth_to_base_on, label_depth_to_scale, 
     #test con pesi
     #weights = depth_to_base_on_values_clean / depth_to_base_on_values_clean.max()  # Normalizza i pesi
     #weights[weights == 0] = 1  # Evita divisioni per 0
+    #function_coefs = poly.polyfit(depth_to_scale_values_clean, depth_to_base_on_values_clean, poly_deg, w = weights)
 
-    function_coefs = poly.polyfit(depth_to_scale_values_clean, depth_to_base_on_values_clean, poly_deg) 
-
-    #function_coefs = poly.polyfit(depth_to_scale_values_clean, depth_to_base_on_values_clean, poly_deg, w = weights) 
+    function_coefs, fit_stats = poly.polyfit(depth_to_scale_values_clean, depth_to_base_on_values_clean, poly_deg, full=True)  
     print(function_coefs)
+    ssr = fit_stats[0]  # Sum of Squared Residuals
 
     function_polynomial = poly.Polynomial(function_coefs)
-    print(function_polynomial)                        
+    print(function_polynomial)                     
 
-    # apply the fitted function to each value of the depth anything pixel depth map to create a scaled version
+    # Compute R²
+    tss = np.sum((depth_to_base_on_values_clean - np.mean(depth_to_base_on_values_clean)) ** 2)
+    r2 = 1 - (ssr / tss) if tss != 0 else float('nan')
+
+    # Compute MSE
+    mse = ssr / len(depth_to_base_on_values_clean)
+
+    # Compute relative error
+    relative_error = np.sum(np.abs(depth_to_base_on_values_clean - function_polynomial(depth_to_scale_values_clean))) / np.sum(np.abs(depth_to_base_on_values_clean))
+
+    # Print results
+    print("Polynomial coefficients:", function_coefs)
+    print(f"Sum of Squared Residuals (SSR): {ssr}")
+    print(f"Coefficient of Determination (R²): {r2}")
+    print(f"Mean Squared Error (MSE): {mse}")
+    print(f"Relative Error: {relative_error}")   
+
+    '''
+    R ^ 2 vicino a 1 → Il modello è un buon fit.
+    SSR grande ma R² vicino a 1 → Probabilmente il range dei valori è ampio.
+    MSE basso → Gli errori sono piccoli.
+    Errore relativo basso → Il fitting è buono rispetto alla scala dei dati.'''
+
+    # apply the fitted function to each value of the depth map to scale to create a scaled version
     # Applica il polinomio a tutta la depth map in una sola operazione
     scaled_depth_map = poly.polyval(depth_to_scale, function_coefs)
     
+    '''
     plt.imshow(scaled_depth_map, cmap='gray', vmin=0, vmax=255)
     plt.title("Fitted Depth Map")
     plt.show()
+    '''
 
     # Punti per la curva del polinomio
     x_fit = np.linspace(depth_to_scale_values_clean.min(), depth_to_scale_values_clean.max(), 500)  # Asse X per il polinomio
     y_fit = function_polynomial(x_fit)  # Valori corrispondenti del polinomio
 
     # Plot
+    '''
     plt.figure(figsize=(8, 6))
     plt.scatter(depth_to_scale_values_clean, depth_to_base_on_values_clean, color='blue', s=1, alpha=0.5, label='Dati Originali')
     plt.plot(x_fit, y_fit, color='red', linewidth=2, label=f'Polynomial of degree {poly_deg}')
@@ -86,6 +113,7 @@ def scale_texture_poly (depth_to_scale, depth_to_base_on, label_depth_to_scale, 
     plt.legend()
     plt.grid()
     plt.show()
+    '''
 
     return function_coefs, scaled_depth_map
 
@@ -309,11 +337,13 @@ def median_processing():
     final_depth_map = median_filtered_depth_map
     final_depth_map[median_filtered_depth_map_zero_indexes] = fitted_depth_map[median_filtered_depth_map_zero_indexes]
 
+    '''
     plt.figure()
     plt.imshow(final_depth_map, cmap='viridis', vmin=0, vmax=255)
     plt.title("Final depth map")
     plt.axis('off')
     plt.show()  
+    '''
 
 # from colmap codebase
 def read_array(path):
@@ -477,7 +507,7 @@ cameras_extrinsics = []
 # Read 1 image every 'skip'
 # e.g. If I have 10 imgs and skip = 3, read images:
 # 3, 6, 9
-skip = 5 # if 1: do not skip imgs
+skip = 1 # if 1: do not skip imgs
 
 print("---Reading images from dataset: \t", imgs_folder)
 print("-- You are reading 1 image every ", skip)
@@ -553,8 +583,7 @@ with open(imagesTxt_path, 'r') as f:
                         max = np.max(depth_colmap)
                         min = np.min(depth_colmap)
 
-                        #norm_depth_colmap = ((depth_colmap - min)/(max-min)) * 255
-
+                        '''
                         # View grayscale from 0 to 255 (test)
                         #plt.imshow(norm_depth_colmap, cmap='gray', vmin=0, vmax=255)
                         plt.figure()
@@ -562,6 +591,7 @@ with open(imagesTxt_path, 'r') as f:
                         plt.title("Colmap")
                         plt.axis('off')
                         plt.show(block=False)
+                        '''
 
                         # ---- Read depth anything v2 (da) depth map - NON metric version
                         # Grayscale image from 0 to 255, where, originally, the HIGHER the color value, the CLOSER the pixel is
@@ -574,11 +604,13 @@ with open(imagesTxt_path, 'r') as f:
                         inverted_depth_da_non_metric = np.invert(depth_da_non_metric)
 
                         # View grayscale from 0 to 255 (test)
+                        '''
                         plt.figure()
                         plt.imshow(inverted_depth_da_non_metric, cmap='gray', vmin=0, vmax=255)
                         plt.title("Depth Anything NON metric (inverted)")
                         plt.axis('off')
                         plt.show(block=False)
+                        '''
 
                         # ---- Read depth anything v2 (da) depth map - METRIC version
                         # Numpy array where each pixel is the metric distance from the camera to the real point (estimated)
@@ -609,12 +641,14 @@ with open(imagesTxt_path, 'r') as f:
 
                         depth_from_3DPoints = np.load(depth_map_from_3DPoints_path)
 
+                        '''
                         # View map from 0 to 255 (test)
                         plt.figure()
                         plt.imshow(depth_from_3DPoints, cmap='viridis')
                         plt.title(f"Depth Map from 3D points: " + img_filename + "_depth.npy")
                         plt.axis('off')
-                        plt.show()
+                        plt.show(block=False)
+                        '''
 
                         # ----------- FIND A FUNCTION
                         
@@ -623,8 +657,6 @@ with open(imagesTxt_path, 'r') as f:
 
                         # find a fitting function and scale the non-metric DA depth map on the true-3d-points depth map
                         fitted_depth_map = scale_texture_poly(inverted_depth_da_non_metric, depth_from_3DPoints, "DA non-metric", "From 3D true points", 3)
-
-
 
                         # ----------- IMAGE
 
