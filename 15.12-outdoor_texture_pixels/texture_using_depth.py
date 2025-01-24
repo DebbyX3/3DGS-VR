@@ -10,6 +10,7 @@ from collections import defaultdict
 from pathlib import Path
 import numpy.polynomial.polynomial as poly
 import scipy
+import scipy.optimize as opt
 
 '''
 Fit a depth map on another using a polynomial function
@@ -92,18 +93,11 @@ def scale_texture_poly (depth_to_scale, depth_to_base_on, label_depth_to_scale, 
     # Applica il polinomio a tutta la depth map in una sola operazione
     scaled_depth_map = poly.polyval(depth_to_scale, function_coefs)
     
-    '''
-    plt.imshow(scaled_depth_map, cmap='gray', vmin=0, vmax=255)
-    plt.title("Fitted Depth Map")
-    plt.show()
-    '''
-
     # Punti per la curva del polinomio
     x_fit = np.linspace(depth_to_scale_values_clean.min(), depth_to_scale_values_clean.max(), 500)  # Asse X per il polinomio
     y_fit = function_polynomial(x_fit)  # Valori corrispondenti del polinomio
 
     # Plot
-    '''
     plt.figure(figsize=(8, 6))
     plt.scatter(depth_to_scale_values_clean, depth_to_base_on_values_clean, color='blue', s=1, alpha=0.5, label='Dati Originali')
     plt.plot(x_fit, y_fit, color='red', linewidth=2, label=f'Polynomial of degree {poly_deg}')
@@ -113,9 +107,69 @@ def scale_texture_poly (depth_to_scale, depth_to_base_on, label_depth_to_scale, 
     plt.legend()
     plt.grid()
     plt.show()
-    '''
 
     return function_coefs, scaled_depth_map
+
+def exponential_func(x, a, b, c):
+    """ Funzione esponenziale per il fitting """
+    return a * np.exp(b * x) + c
+
+def scale_texture_exponential (depth_to_scale, depth_to_base_on, label_depth_to_scale, label_depth_to_base_on, poly_deg):
+    # ---- Flatten
+    depth_to_scale_flat = depth_to_scale.flatten()
+    depth_to_base_on_flat = depth_to_base_on.flatten()
+
+    # Trova gli indici con valori zero in depth_to_base_on e rimuovili
+    zero_indexes_depth_to_base_on = np.where(depth_to_base_on_flat == 0)[0]
+    depth_to_scale_values_clean = np.delete(depth_to_scale_flat, zero_indexes_depth_to_base_on)
+    depth_to_base_on_values_clean = np.delete(depth_to_base_on_flat, zero_indexes_depth_to_base_on)
+
+    # Fitting esponenziale
+    popt, pcov = opt.curve_fit(exponential_func, depth_to_scale_values_clean, depth_to_base_on_values_clean, p0=(1, -0.01, 1))
+    a, b, c = popt
+    print(f"Parametri ottimizzati: a={a}, b={b}, c={c}")
+
+    # Calcolo dei residui
+    y_pred = exponential_func(depth_to_scale_values_clean, *popt)
+    residuals = depth_to_base_on_values_clean - y_pred
+    ssr = np.sum(residuals ** 2)  # Sum of Squared Residuals
+
+    # Calcolo del coefficiente di determinazione R²
+    tss = np.sum((depth_to_base_on_values_clean - np.mean(depth_to_base_on_values_clean)) ** 2)
+    r2 = 1 - (ssr / tss) if tss != 0 else float('nan')
+
+    # Calcolo MSE
+    mse = ssr / len(depth_to_base_on_values_clean)
+
+    # Calcolo dell'errore relativo medio
+    relative_error = np.sum(np.abs(residuals)) / np.sum(np.abs(depth_to_base_on_values_clean))
+
+    # Stampa delle metriche
+    print(f"SSR (Sum of Squared Residuals): {ssr}")
+    print(f"R² (Coefficient of Determination): {r2}")
+    print(f"MSE (Mean Squared Error): {mse}")
+    print(f"Errore Relativo Medio: {relative_error}")
+
+    # Creazione della depth map scalata usando la funzione esponenziale
+    scaled_depth_map = exponential_func(depth_to_scale, *popt)
+
+    # Plot dei risultati
+    plot_fitting_results(depth_to_scale_values_clean, depth_to_base_on_values_clean, y_pred, label_depth_to_scale, label_depth_to_base_on)
+
+    return popt, scaled_depth_map
+
+def plot_fitting_results(x, y_true, y_pred, label_x, label_y):
+    """ Funzione per visualizzare il fitting con scatter plot """
+    plt.figure(figsize=(8, 6))
+    plt.scatter(x, y_true, label='Dati reali', color='blue', s=1, alpha=0.5)
+    plt.scatter(x, y_pred, label='Fit esponenziale', color='red', s=1, alpha=0.5)
+    plt.xlabel(label_x)
+    plt.ylabel(label_y)
+    plt.title('Fitting esponenziale')
+    plt.legend()
+    plt.grid()
+    plt.show()
+
 
 def median_processing():
     '''
@@ -582,16 +636,14 @@ with open(imagesTxt_path, 'r') as f:
 
                         max = np.max(depth_colmap)
                         min = np.min(depth_colmap)
-
-                        '''
+                        
                         # View grayscale from 0 to 255 (test)
                         #plt.imshow(norm_depth_colmap, cmap='gray', vmin=0, vmax=255)
                         plt.figure()
                         plt.imshow(depth_colmap, cmap='gray')
                         plt.title("Colmap")
                         plt.axis('off')
-                        plt.show(block=False)
-                        '''
+                        plt.show(block=False)                        
 
                         # ---- Read depth anything v2 (da) depth map - NON metric version
                         # Grayscale image from 0 to 255, where, originally, the HIGHER the color value, the CLOSER the pixel is
@@ -617,6 +669,7 @@ with open(imagesTxt_path, 'r') as f:
                         # the LOWER the metric value, the CLOSER the pixel is
                         # There's also the image version, but is just a representation of the values normalized. 
                         # Instead, we have to use the numpy matrix generated by the metric estimation
+                        
                         '''
                         depth_map_da_metric_filename = Path(img_filename).stem + "_raw_depth_meter.npy" # (remove file extension)
                         depth_map_da_metric_path = os.path.join(depth_map_da_metric_folder, depth_map_da_metric_filename)
@@ -641,14 +694,14 @@ with open(imagesTxt_path, 'r') as f:
 
                         depth_from_3DPoints = np.load(depth_map_from_3DPoints_path)
 
-                        '''
+                        
                         # View map from 0 to 255 (test)
                         plt.figure()
                         plt.imshow(depth_from_3DPoints, cmap='viridis')
                         plt.title(f"Depth Map from 3D points: " + img_filename + "_depth.npy")
                         plt.axis('off')
-                        plt.show(block=False)
-                        '''
+                        plt.show(block=True)
+                        
 
                         # ----------- FIND A FUNCTION
                         
@@ -656,7 +709,17 @@ with open(imagesTxt_path, 'r') as f:
                         #median_processing() 
 
                         # find a fitting function and scale the non-metric DA depth map on the true-3d-points depth map
-                        fitted_depth_map = scale_texture_poly(inverted_depth_da_non_metric, depth_from_3DPoints, "DA non-metric", "From 3D true points", 3)
+                        #fitted_depth_map = scale_texture_poly(inverted_depth_da_non_metric, depth_from_3DPoints, "DA non-metric", "From 3D true points", 3)
+                        # nope
+                        # fitted_depth_map = scale_texture_poly(depth_da_metric, depth_from_3DPoints, "DA metric", "From 3D true points", 3)
+
+                        _, fitted_depth_map = scale_texture_exponential(inverted_depth_da_non_metric, depth_from_3DPoints, "DA non-metric", "From 3D true points", 3)
+
+                        
+                        plt.imshow(fitted_depth_map, cmap='gray', vmin=0, vmax=255)
+                        plt.title("Fitted Depth Map")
+                        plt.show()
+                        
 
                         # ----------- IMAGE
 
