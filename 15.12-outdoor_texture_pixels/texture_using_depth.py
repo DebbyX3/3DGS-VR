@@ -125,7 +125,9 @@ def scale_texture_exponential (depth_to_scale, depth_to_base_on, label_depth_to_
     depth_to_base_on_values_clean = np.delete(depth_to_base_on_flat, zero_indexes_depth_to_base_on)
 
     # Fitting esponenziale
-    popt, pcov = opt.curve_fit(exponential_func, depth_to_scale_values_clean, depth_to_base_on_values_clean, p0=(1, -0.01, 1))
+    # aumento il maxfev
+    # ho provato a stimare meglio i par iniziali p0, ma esce sempre bleah ad un certo punto
+    popt, pcov = opt.curve_fit(exponential_func, depth_to_scale_values_clean, depth_to_base_on_values_clean, p0=(1, -0.01, 1), maxfev=5000)
     a, b, c = popt
     print(f"Parametri ottimizzati: a={a}, b={b}, c={c}")
 
@@ -437,7 +439,6 @@ depth_map_colmap_folder = '../datasets/colmap_reconstructions/cavignal-bench_pin
 depth_map_da_non_metric_folder = '../depth-anything-estimations/non-metric_depths/cavignal_bench'
 depth_map_da_metric_folder = '../depth-anything-estimations/metric_depths/cavignal_bench'
 
-
 cameraTxt_path = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/cameras.txt'
 imagesTxt_path = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/images.txt'
 imgs_folder = "../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/images"
@@ -445,6 +446,7 @@ depth_map_colmap_folder = '../datasets/colmap_reconstructions/cavignal-fountain_
 depth_map_da_non_metric_folder = '../depth-anything-estimations/non-metric_depths/cavignal_fountain'
 depth_map_da_metric_folder = '../depth-anything-estimations/metric_depths/cavignal-fountain_pinhole_1camera'
 depth_map_from_3DPoints_folder = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/depth_maps_from_3DPoints'
+depth_map_fitted_save_folder = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/depth_after_fitting/exp_fit_da_non_metric_and_colmap_true_points'
 
 # ************************** EXTRACT INTRINSICS FROM CAMERA.TXT FILE **************************
 # Intrinsics matrix:
@@ -639,11 +641,14 @@ with open(imagesTxt_path, 'r') as f:
                         
                         # View grayscale from 0 to 255 (test)
                         #plt.imshow(norm_depth_colmap, cmap='gray', vmin=0, vmax=255)
+                        '''
                         plt.figure()
-                        plt.imshow(depth_colmap, cmap='gray')
+                        #plt.imshow(depth_colmap, cmap='gray')
+                        plt.imshow(depth_colmap, cmap='viridis')
                         plt.title("Colmap")
                         plt.axis('off')
-                        plt.show(block=False)                        
+                        plt.show(block=False)       
+                        '''                 
 
                         # ---- Read depth anything v2 (da) depth map - NON metric version
                         # Grayscale image from 0 to 255, where, originally, the HIGHER the color value, the CLOSER the pixel is
@@ -695,12 +700,14 @@ with open(imagesTxt_path, 'r') as f:
                         depth_from_3DPoints = np.load(depth_map_from_3DPoints_path)
 
                         
-                        # View map from 0 to 255 (test)
+                        # View map from 0 to 255
+                        '''
                         plt.figure()
                         plt.imshow(depth_from_3DPoints, cmap='viridis')
                         plt.title(f"Depth Map from 3D points: " + img_filename + "_depth.npy")
                         plt.axis('off')
                         plt.show(block=True)
+                        '''
                         
 
                         # ----------- FIND A FUNCTION
@@ -709,23 +716,23 @@ with open(imagesTxt_path, 'r') as f:
                         #median_processing() 
 
                         # find a fitting function and scale the non-metric DA depth map on the true-3d-points depth map
+
+                        # Polynomial
                         #fitted_depth_map = scale_texture_poly(inverted_depth_da_non_metric, depth_from_3DPoints, "DA non-metric", "From 3D true points", 3)
-                        # nope
+                        
+                        # nope skifo
                         # fitted_depth_map = scale_texture_poly(depth_da_metric, depth_from_3DPoints, "DA metric", "From 3D true points", 3)
 
+                        # Exponential (better results than poly)
                         _, fitted_depth_map = scale_texture_exponential(inverted_depth_da_non_metric, depth_from_3DPoints, "DA non-metric", "From 3D true points", 3)
-
                         
-                        plt.imshow(fitted_depth_map, cmap='gray', vmin=0, vmax=255)
+                        '''
+                        plt.imshow(fitted_depth_map, cmap='viridis')
                         plt.title("Fitted Depth Map")
                         plt.show()
+                        '''
                         
-
-                        # ----------- IMAGE
-
-                        # Read the image
-                        img_path = os.path.join(imgs_folder, img_filename)
-                        img = np.asarray(Image.open(img_path))   
+                        np.save(os.path.join(depth_map_fitted_save_folder, f"{img_filename}_depth.npy"), fitted_depth_map)  # Salva ogni depth map come file NumPy
 
 
 
