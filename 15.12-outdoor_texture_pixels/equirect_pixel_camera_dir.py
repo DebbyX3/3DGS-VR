@@ -195,8 +195,11 @@ def inverse_mapping(texture_width, texture_height, extrinsics, intrinsics, image
     valid_mask = d_local[..., 2] > 0  # solo punti davanti alla telecamera
 
     # calcolo di u_image e v_image
-    u_image = np.full((texture_height, texture_width), -1, dtype=np.int32)
-    v_image = np.full((texture_height, texture_width), -1, dtype=np.int32)
+    #uguale anche con queste due righe sotto commentate
+    #u_image = np.full((texture_height, texture_width), -1, dtype=np.int32)
+    #v_image = np.full((texture_height, texture_width), -1, dtype=np.int32)
+    u_image = np.full_like(u_texel, -1, dtype=int)
+    v_image = np.full_like(v_texel, -1, dtype=int)
 
     # dividi per Z per ottenere le coordinate immagine (proiezione prospettica)
     u_image[valid_mask] = (d_local[valid_mask, 0] / d_local[valid_mask, 2]).astype(int)
@@ -237,7 +240,7 @@ def inverse_mapping(texture_width, texture_height, extrinsics, intrinsics, image
     return colors, valid_mask   
     '''
 
-def calculate_pixel_distances(intrinsics, image_width, image_height):
+def calculate_pixel_distances_from_camera_center(intrinsics, image_width, image_height):
     # 1. Crea una griglia di coordinate pixel (u, v)
     u, v = np.meshgrid(np.arange(image_width), np.arange(image_height))  # Shape: (H, W)
     
@@ -269,12 +272,13 @@ imagesTxt_path = '../datasets/colmap_reconstructions/cavignal-bench_pinhole_1cam
 imgs_folder = "../datasets/colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/images"
 depth_map_folder = '../datasets/colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/stereo/depth_maps'
 
-'''
+
 cameraTxt_path = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/cameras.txt'
 imagesTxt_path = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/images.txt'
 imgs_folder = "../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/images"
 depth_map_folder = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/dense/stereo/depth_maps'
-'''
+depth_map_fitted_folder = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/depth_after_fitting/exp_fit_da_non_metric_and_colmap_true_points'
+
 
 # ************************** EXTRACT INTRINSICS FROM CAMERA.TXT FILE **************************
 # Intrinsics matrix:
@@ -407,7 +411,7 @@ cameras_extrinsics = []
 # Read 1 image every 'skip'
 # e.g. If I have 10 imgs and skip = 3, read images:
 # 3, 6, 9
-skip = 10 # if 1: do not skip imgs
+skip = 1 # if 1: do not skip imgs
 print("-- You are reading 1 image every ", skip)
 
 with open(imagesTxt_path, 'r') as f:
@@ -422,11 +426,12 @@ with open(imagesTxt_path, 'r') as f:
     
                     if count_imgs % skip == 0: # salta tot righe
                         
-                        print("--- Img num ", (count_imgs/skip)/2 if skip %2 != 0 else count_imgs/skip)
-                        print("Count: ", count)
-
                         single_camera_info = line.split() # split every field in line
                         cameras_info.append(single_camera_info) # and store them as separate fields as list in a list ( [ [] ] )
+
+                        print("--- Img num ", (count_imgs/skip)/2 if skip %2 != 0 else count_imgs/skip)
+                        print("-- Img filename ", single_camera_info[9])
+                        print("Count: ", count)
 
                         # Images info contains:
                         # IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
@@ -480,6 +485,8 @@ with open(imagesTxt_path, 'r') as f:
                         idx = len(all_points)
                         all_lines.append([idx - 2, idx - 1])  # Indici degli ultimi due punti
 
+                        # ------------ READ IMAGES
+
                         # Take the image file name
                         img_filename = single_camera_info[9]
 
@@ -488,7 +495,8 @@ with open(imagesTxt_path, 'r') as f:
                         img = np.asarray(Image.open(img_path))   
 
                         
-                        # ----- IMAGE TEXTURE FORWARD
+                        # ----- IMAGE TEXTURE FORWARD MAPPING
+                        # Comment block if using inverse mapping
                         '''
                         #(image, intrinsics, extrinsics)
                         texel_coords, colors = forward_mapping_project_pixels(img, intrinsic_matrix, extrinsics_matrix, width, height)
@@ -502,15 +510,22 @@ with open(imagesTxt_path, 'r') as f:
                             })
                         '''
 
-                        # Find image height and width separately
-
-                        # ----- IMAGE TEXTURE INVERSE
+                        # ----- IMAGE TEXTURE INVERSE MAPPING
+                        # Comment block if using forward mapping
 
                         # con zbuffer
                         image_width = img.shape[1]
                         image_height = img.shape[0]
 
-                        distances = calculate_pixel_distances(intrinsic_matrix, image_width, image_height)
+                        '''
+                        --- METODI PER Z BUFFER INVERSE MAPPING
+                        - COMMENTA UN BLOCCO SE SI USA UN METODO DIVERSO                        
+                        '''
+
+                        '''
+                        # METODO 1 - DISTANZA DA CENTRO DELLA CAMERA
+                        # trova distanza di ciascun pixel dal centro della camera
+                        distances = calculate_pixel_distances_from_camera_center(intrinsic_matrix, image_width, image_height)
                         
                         colors, valid_mask, mapped_distances = inverse_mapping(
                                                                 texture_width, texture_height,
@@ -519,17 +534,60 @@ with open(imagesTxt_path, 'r') as f:
                                                             )
                         
                         
-                        # Aggiorna la texture e il buffer di profondità                        
-                        #zbuffer che tiene valori + lontani
-
-
                         # Aggiorna la texture usando il buffer delle distanze (z-buffer inverso)
                         farther_mask = valid_mask & (mapped_distances > z_buffer_inverse)
                         z_buffer_inverse[farther_mask] = mapped_distances[farther_mask]
                         texture[farther_mask] = colors[farther_mask]
+                        '''
 
                         '''
-                        #test con blending
+                        # METODO 2 - DISTANZA USANDO DEPTH MAP
+                        '''
+                        depth_map_filename = img_filename + "_depth.npy" 
+                        depth_map_path = os.path.join(depth_map_fitted_folder, depth_map_filename)
+
+                        depth_map = np.load(depth_map_path)
+                        
+                        colors, valid_mask, depth_texture = inverse_mapping(
+                                                            texture_width, texture_height,
+                                                            extrinsics_matrix, intrinsic_matrix, img,
+                                                            image_width, image_height, depth_map
+                                                            )
+                        
+                        
+
+                        ''''                        # - alternativa: tieni pixel + lontani
+                        # Aggiorna la texture usando il buffer delle distanze (z-buffer inverso)
+                        # tieni solo pixel più lontani - aggiorna texture solo se nuovo valore di profondità è maggiore
+                        farther_mask = valid_mask & (depth_texture > z_buffer_inverse) # scelgo punti più lontani
+                        z_buffer_inverse[farther_mask] = depth_texture[farther_mask]
+                        texture[farther_mask] = colors[farther_mask]
+                        '''
+                        
+                        # - alternativa a tenere i pixel + lontani:
+                        # usa una soglia di distanza
+                        # Applica la soglia: considera solo i punti con profondità maggiore di depth_threshold
+                        depth_threshold = 20
+                        above_threshold_mask = valid_mask & (depth_texture > depth_threshold)
+                        # Scegli i pixel più lontani tra quelli che superano la soglia
+                        farther_mask = above_threshold_mask & (depth_texture > z_buffer_inverse)                        
+                        # Aggiorna solo i texel validi
+                        z_buffer_inverse[farther_mask] = depth_texture[farther_mask]
+                        texture[farther_mask] = colors[farther_mask]                        
+
+                        '''
+                        # - alternativa: tieni pixel + vicini
+                        # tieni pixel + vicini z buffer classico
+                        closer_mask = valid_mask & (depth_texture < z_buffer)  # Scegli i punti più vicini
+                        z_buffer[closer_mask] = depth_texture[closer_mask]  # Aggiorna la profondità minima
+                        texture[closer_mask] = colors[closer_mask]  # Aggiorna il colore
+                        '''
+
+                        '''
+                        TEST CON BLENDING - INVERSE MAPPING
+                        '''
+
+                        '''
                         # elabora l'immagine corrente
                         colors, valid_mask = inverse_mapping(
                             width, height,
