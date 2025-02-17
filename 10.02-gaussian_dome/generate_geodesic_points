@@ -1,0 +1,174 @@
+import open3d as o3d
+import numpy as np
+import struct
+from plyfile import PlyData, PlyElement
+import pycolmap
+
+def icosphere(subdivisions=2, radius=1.0, center=np.array([0.0, 0.0, 0.0]), return_centroids=False):
+    t = (1.0 + np.sqrt(5.0)) / 2.0
+    vertices = np.array([[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
+                         [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
+                         [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]])
+    vertices /= np.linalg.norm(vertices[0])
+    vertices *= radius
+    
+    faces = np.array([[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
+                      [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+                      [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
+                      [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]])
+    
+    def midpoint(v1, v2):
+        mid = (v1 + v2) / 2.0
+        return mid / np.linalg.norm(mid) * radius
+    
+    for _ in range(subdivisions):
+        new_faces = []
+        midpoint_cache = {}
+        
+        def get_midpoint(i1, i2):
+            if (i1, i2) not in midpoint_cache:
+                if (i2, i1) in midpoint_cache:
+                    return midpoint_cache[(i2, i1)]
+                midpoint_cache[(i1, i2)] = len(vertices)
+                vertices.append(midpoint(vertices[i1], vertices[i2]))
+            return midpoint_cache[(i1, i2)]
+        
+        vertices = list(vertices)
+        for f in faces:
+            a, b, c = f
+            ab = get_midpoint(a, b)
+            bc = get_midpoint(b, c)
+            ca = get_midpoint(c, a)
+            new_faces.extend([[a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]])
+        
+        faces = np.array(new_faces)
+        vertices = np.array(vertices)
+    
+    if return_centroids:
+        centroids = np.mean(vertices[faces], axis=1)
+        return centroids + center
+    
+    return vertices + center
+
+def save_as_ply(points, filename="gaussians.ply", color=[255, 255, 255]):
+    normals = -points / np.linalg.norm(points, axis=1, keepdims=True)  # Verso il centro
+    vertex_data = np.array([
+        (p[0], p[1], p[2], c[0], c[1], c[2], n[0], n[1], n[2])
+        for p, c, n in zip(points, [color] * len(points), normals)],
+        dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4'),
+               ('red', 'u1'), ('green', 'u1'), ('blue', 'u1'),
+               ('nx', 'f4'), ('ny', 'f4'), ('nz', 'f4')])
+    ply_element = PlyElement.describe(vertex_data, 'vertex')
+    PlyData([ply_element]).write(filename)
+
+def find_most_distant_point(point_cloud, initial_point):
+    # Convert point cloud to numpy array
+    points = np.asarray(point_cloud.points)
+    
+    # Calculate the Euclidean distance from the initial point to all points in the point cloud
+    distances = np.linalg.norm(points - initial_point, axis=1)
+    
+    # Find the index of the maximum distance
+    max_distance_index = np.argmax(distances)
+    
+    # Get the most distant point
+    most_distant_point = points[max_distance_index]
+    
+    # Get the maximum distance
+    max_distance = distances[max_distance_index]
+    
+    return most_distant_point, max_distance
+
+sparse_folder = '../../gaussian-splatting-new/gaussian-splatting/data/brg_rm_small_park_test/sparse/0/'
+
+reconstruction = pycolmap.Reconstruction(sparse_folder)
+print(reconstruction.summary())
+
+# LINESET to draw camera directions in 3d as 'vectors'
+lineset = o3d.geometry.LineSet()
+all_points = []
+all_lines = []
+
+# loop on all images
+camera_data = {}
+
+for i in range(1, reconstruction.num_images() + 1):
+    image = reconstruction.image(i)
+
+    camera_coords = image.projection_center()
+    direction_vector = image.viewing_direction()
+
+    # cerca il punto finale per fare sta linea
+    # punto di inizio è la camera stessa
+    # punto finale = punto inizio + direzione * lunghezza vettore
+    final_point = camera_coords + direction_vector * 1.5
+
+    # ora traccio linea
+    all_points.append(camera_coords)
+    all_points.append(final_point)
+
+    # Aggiungi la linea tra gli ultimi due punti aggiunti
+    idx = len(all_points)
+    all_lines.append([idx - 2, idx - 1])  # Indici degli ultimi due punti
+
+    # Store camera data
+    camera_data[i] = {
+        "center": camera_coords,
+        "direction": direction_vector
+    }
+
+'''
+# Accessing the values outside the loop
+for camera_id, data in camera_data.items(): # camera_id = key, data = value
+    print(f"Camera {camera_id} center: {data['center']}")
+    print(f"Camera {camera_id} direction: {data['direction']}")
+'''
+
+
+# -------- Find center of all cameras (center of point cloud)
+
+# Create new point cloud, add camera centers
+cameras_point_cloud = o3d.geometry.PointCloud()
+# extract from dict
+cameras_coords = [data['center'] for data in camera_data.values()]
+cameras_point_cloud.points = o3d.utility.Vector3dVector(cameras_coords)
+cameras_mass_center = cameras_point_cloud.get_center()
+
+most_distant_point, max_distance = find_most_distant_point(cameras_point_cloud, cameras_mass_center)
+print("Most distant point:", most_distant_point)
+print("Distance:", max_distance)
+
+
+
+# --------- create icosphere based on max_distance
+# radius = max_distance * 2
+icosphere_points_pos = icosphere(subdivisions = 3, 
+                        radius = max_distance * 2, 
+                        center = cameras_mass_center, 
+                        return_centroids = True)
+
+print("num of icosphere points generated: ", icosphere_points_pos.size/3)
+print("radius of icosphere: ", max_distance * 2)
+
+icosphere_pc = o3d.geometry.PointCloud()
+icosphere_pc.points = o3d.utility.Vector3dVector(icosphere_points_pos)
+
+
+
+
+# ------- SHOW CAMERAS IN 3D (RED) + FORWARD VECTOR (GREEN)
+# Paint camera coords red
+cameras_point_cloud.paint_uniform_color([1, 0, 0])
+
+# Create lineset
+lineset.points = o3d.utility.Vector3dVector(all_points)
+lineset.lines = o3d.utility.Vector2iVector(all_lines)
+
+# Apply color to lineset
+GREEN = [0.0, 1.0, 0.0]
+lines_color = [GREEN] * len(lineset.lines)
+lineset.colors = o3d.utility.Vector3dVector(lines_color)
+
+o3d.visualization.draw_geometries([lineset, cameras_point_cloud, icosphere_pc])
+
+#save_as_ply(icosphere_points_pos, "points3D.ply")

@@ -164,7 +164,7 @@ def inverse_mapping(texture_width, texture_height, extrinsics, intrinsics, image
 
     # calcolo di (theta, phi) per ogni texel
     theta = (u_texel / texture_width) * 2 * np.pi - np.pi
-    phi = (v_texel / texture_height) * np.pi - np.pi / 2
+    phi = (v_texel / texture_height) * np.pi - (np.pi / 2)
 
     # direzione globale w_global
     # global directions vector (shape: (height, width, 3))

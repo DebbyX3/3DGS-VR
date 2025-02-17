@@ -558,8 +558,8 @@ texture_width, texture_height = 2048, 1024
 # LOOP INFO
 count = 0
 count_imgs = 0
-images_info = []
-cameras_extrinsics = []
+images_info = {}
+cameras_extrinsics = {}
 # Read 1 image every 'skip'
 # e.g. If I have 10 imgs and skip = 3, read images:
 # 3, 6, 9
