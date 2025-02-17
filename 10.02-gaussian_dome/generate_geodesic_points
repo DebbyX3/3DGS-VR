@@ -46,9 +46,9 @@ def icosphere(subdivisions=2, radius=1.0, center=np.array([0.0, 0.0, 0.0]), retu
     
     if return_centroids:
         centroids = np.mean(vertices[faces], axis=1)
-        return centroids + center
+        return centroids + center, faces
     
-    return vertices + center
+    return vertices + center, faces
 
 def save_as_ply(points, filename="gaussians.ply", color=[255, 255, 255]):
     normals = -points / np.linalg.norm(points, axis=1, keepdims=True)  # Verso il centro
@@ -78,6 +78,57 @@ def find_most_distant_point(point_cloud, initial_point):
     max_distance = distances[max_distance_index]
     
     return most_distant_point, max_distance
+
+def calculate_circumradius(vertices, faces):
+    circumradii = []
+    for face in faces:
+        a, b, c = vertices[face]
+        # Lengths of sides of the triangle
+        ab = np.linalg.norm(a - b)
+        bc = np.linalg.norm(b - c)
+        ca = np.linalg.norm(c - a)
+        # Semi-perimeter
+        s = (ab + bc + ca) / 2
+        # Area of the triangle using Heron's formula
+        area = np.sqrt(s * (s - ab) * (s - bc) * (s - ca))
+        # Circumradius formula
+        circumradius = (ab * bc * ca) / (4 * area)
+        circumradii.append(circumradius)
+    return max(circumradii)
+
+def create_circle(center, normal, radius, resolution=30):
+    """
+    Create a circle in 3D space using Open3D.
+    
+    Parameters:
+    - center: The center of the circle.
+    - normal: The normal vector of the circle plane.
+    - radius: The radius of the circle.
+    - resolution: The number of points to generate the circle.
+    
+    Returns:
+    - circle: An Open3D LineSet representing the circle.
+    """
+    theta = np.linspace(0, 2 * np.pi, resolution)
+    circle_points = np.array([radius * np.cos(theta), radius * np.sin(theta), np.zeros_like(theta)]).T
+    
+    # Create a rotation matrix to align the circle with the normal vector
+    z_axis = np.array([0, 0, 1])
+    normal = normal / np.linalg.norm(normal)
+    v = np.cross(z_axis, normal)
+    c = np.dot(z_axis, normal)
+    k = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    rotation_matrix = np.eye(3) + k + k @ k * (1 / (1 + c))
+    
+    # Rotate and translate the circle points
+    circle_points = circle_points @ rotation_matrix.T + center
+    
+    # Create the LineSet for the circle
+    lines = [[i, (i + 1) % resolution] for i in range(resolution)]
+    circle = o3d.geometry.LineSet()
+    circle.points = o3d.utility.Vector3dVector(circle_points)
+    circle.lines = o3d.utility.Vector2iVector(lines)
+    return circle
 
 sparse_folder = '../../gaussian-splatting-new/gaussian-splatting/data/brg_rm_small_park_test/sparse/0/'
 
@@ -142,18 +193,30 @@ print("Distance:", max_distance)
 
 # --------- create icosphere based on max_distance
 # radius = max_distance * 2
-icosphere_points_pos = icosphere(subdivisions = 3, 
-                        radius = max_distance * 2, 
-                        center = cameras_mass_center, 
-                        return_centroids = True)
+ico_points_pos, ico_faces = icosphere(subdivisions = 5, 
+                            radius = max_distance * 2, 
+                            center = cameras_mass_center, 
+                            return_centroids = False) #keep false!!!!!!!!!!!
 
-print("num of icosphere points generated: ", icosphere_points_pos.size/3)
+print("num of icosphere points generated: ", ico_points_pos.size/3)
 print("radius of icosphere: ", max_distance * 2)
 
 icosphere_pc = o3d.geometry.PointCloud()
-icosphere_pc.points = o3d.utility.Vector3dVector(icosphere_points_pos)
+icosphere_pc.points = o3d.utility.Vector3dVector(ico_points_pos)
 
 
+
+# --------- find optimal radius of circles of point on the icosphere to cover all other circles
+optimal_radius = calculate_circumradius(ico_points_pos, ico_faces)
+print("Optimal radius for circles:", optimal_radius)
+
+
+# --------- Create circles on the icosphere points
+circles = []
+
+for point in ico_points_pos:
+    circle = create_circle(center=point, normal=point - cameras_mass_center, radius=optimal_radius)
+    circles.append(circle)
 
 
 # ------- SHOW CAMERAS IN 3D (RED) + FORWARD VECTOR (GREEN)
@@ -169,6 +232,6 @@ GREEN = [0.0, 1.0, 0.0]
 lines_color = [GREEN] * len(lineset.lines)
 lineset.colors = o3d.utility.Vector3dVector(lines_color)
 
-o3d.visualization.draw_geometries([lineset, cameras_point_cloud, icosphere_pc])
+o3d.visualization.draw_geometries([lineset, cameras_point_cloud, icosphere_pc] + circles)
 
-#save_as_ply(icosphere_points_pos, "points3D.ply")
+save_as_ply(ico_points_pos, "points3D.ply")
