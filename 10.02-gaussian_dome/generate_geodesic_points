@@ -51,13 +51,13 @@ def icosphere(subdivisions=2, radius=1.0, center=np.array([0.0, 0.0, 0.0]), retu
     
     return vertices + center, faces
 
-def save_as_ply(points, filename="gaussians.ply", color=[255, 255, 255]):
+def save_as_ply(points, colors, filename="gaussians.ply"):
     normals = -points / np.linalg.norm(points, axis=1, keepdims=True)  # Verso il centro
     vertex_data = np.array([
         (p[0], p[1], p[2], c[0], c[1], c[2], n[0], n[1], n[2])
-        for p, c, n in zip(points, [color] * len(points), normals)],
+        for p, c, n in zip(points, colors, normals)],
         dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4'),
-               ('red', 'u1'), ('green', 'u1'), ('blue', 'u1'),
+               ('red', 'u4'), ('green', 'u4'), ('blue', 'u4'),
                ('nx', 'f4'), ('ny', 'f4'), ('nz', 'f4')])
     ply_element = PlyElement.describe(vertex_data, 'vertex')
     PlyData([ply_element]).write(filename)
@@ -199,17 +199,18 @@ print("Distance:", max_distance)
 
 # --------- create icosphere based on max_distance
 # radius = max_distance * 2
-ico_points_pos, ico_faces = icosphere(subdivisions = 7, 
-                            radius = max_distance * 2, # metti *4 o *5
+ico_points_pos, ico_faces = icosphere(subdivisions = 9, 
+                            radius = max_distance * 4, # metti *4 o *5
                             center = center_of_scene, 
                             return_centroids = False) #keep false!!!!!!!!!!!
 
 print("num of icosphere points generated: ", ico_points_pos.size/3)
-print("radius of icosphere: ", max_distance * 2)
+print("radius of icosphere: ", max_distance * 4)
 
 icosphere_pc = o3d.geometry.PointCloud()
 icosphere_pc.points = o3d.utility.Vector3dVector(ico_points_pos)
-icosphere_pc.paint_uniform_color([1, 1, 1])
+#attenzione! 255 sono rgb, o3d li vorrebbe 0-1, però visto che salvo gli rgb nel ply, devo tenere così con 255
+icosphere_pc.colors = o3d.utility.Vector3dVector(np.full((len(ico_points_pos), 3), 255))
 
 # ------------- project 3d point onto the image
 
@@ -254,11 +255,12 @@ for point_3D_id, infos in point_colors.items():
     chosen_color = infos[closest_index][0]
 
     # Mettilo nella point cloud
-    icosphere_pc.colors[point_3D_id] = tuple(el/255 for el in chosen_color)  # devo fare sta roba per la div nella tupla
+    icosphere_pc.colors[point_3D_id] = chosen_color
 
     #print(f"Punto 3D {point_3D_id}: Colore scelto (più vicino al centro della scena): {chosen_color}")
 
-'''
+print("finita proiezione colori\nInizio ricerca raggio ottimo")
+
 # --------- find optimal radius of circles of point on the icosphere to cover all other circles
 optimal_radius = calculate_circumradius(ico_points_pos, ico_faces)
 print("Optimal radius for circles:", optimal_radius)
@@ -268,9 +270,8 @@ print("Optimal radius for circles:", optimal_radius)
 circles = []
 
 for point in ico_points_pos:
-    circle = create_circle(center=point, normal=point - cameras_mass_center, radius=optimal_radius)
+    circle = create_circle(center=point, normal=point - center_of_scene, radius=optimal_radius)
     circles.append(circle)
-'''
 
 # ------- SHOW CAMERAS IN 3D (RED) + FORWARD VECTOR (GREEN)
 # Paint camera coords red
@@ -285,7 +286,14 @@ GREEN = [0.0, 1.0, 0.0]
 lines_color = [GREEN] * len(lineset.lines)
 lineset.colors = o3d.utility.Vector3dVector(lines_color)
 
-#o3d.visualization.draw_geometries([lineset, cameras_point_cloud, icosphere_pc] + circles)
-o3d.visualization.draw_geometries([lineset, cameras_point_cloud, icosphere_pc])
+save_as_ply(ico_points_pos, icosphere_pc.colors, "points3D_9subd.ply")
 
-#save_as_ply(ico_points_pos, "points3D.ply")
+# SE VUOI VISUALIZZARE SU OPEN3D, DIVIDI TUTTI I COLORI PER 255
+# NON LI SALVO 'DIVISI' PERCHE GS LI VUOLE COME COLMAP, CIOE RGB CLASSICI
+'''
+test = np.asarray(icosphere_pc.colors)/255
+icosphere_pc.colors = o3d.utility.Vector3dVector(test)
+
+#o3d.visualization.draw_geometries([lineset, cameras_point_cloud, icosphere_pc] + circles)
+#o3d.visualization.draw_geometries([lineset, cameras_point_cloud, icosphere_pc])
+'''
