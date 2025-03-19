@@ -7,3 +7,6 @@ datasets/colmap_reconstructions/water_bottle_gui_pinhole_1camera/db.db
 datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera
 
 Point_clouds_deb
+
+10.02-gaussian_dome/points3D_output
+10.02-gaussian_dome/ply_manipulation
