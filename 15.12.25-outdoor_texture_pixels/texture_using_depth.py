@@ -127,7 +127,7 @@ def scale_texture_exponential (depth_to_scale, depth_to_base_on, label_depth_to_
     # Fitting esponenziale
     # aumento il maxfev
     # ho provato a stimare meglio i par iniziali p0, ma esce sempre bleah ad un certo punto
-    popt, pcov = opt.curve_fit(exponential_func, depth_to_scale_values_clean, depth_to_base_on_values_clean, p0=(1, -0.01, 1), maxfev=5000)
+    popt, pcov = opt.curve_fit(exponential_func, depth_to_scale_values_clean, depth_to_base_on_values_clean, p0=(1, -0.01, 1), maxfev=50000)
     a, b, c = popt
     print(f"Parametri ottimizzati: a={a}, b={b}, c={c}")
 
@@ -156,7 +156,7 @@ def scale_texture_exponential (depth_to_scale, depth_to_base_on, label_depth_to_
     scaled_depth_map = exponential_func(depth_to_scale, *popt)
 
     # Plot dei risultati
-    plot_fitting_results(depth_to_scale_values_clean, depth_to_base_on_values_clean, y_pred, label_depth_to_scale, label_depth_to_base_on)
+    #plot_fitting_results(depth_to_scale_values_clean, depth_to_base_on_values_clean, y_pred, label_depth_to_scale, label_depth_to_base_on)
 
     return popt, scaled_depth_map
 
@@ -448,6 +448,15 @@ depth_map_da_metric_folder = '../depth-anything-estimations/metric_depths/cavign
 depth_map_from_3DPoints_folder = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/depth_maps_from_3DPoints'
 depth_map_fitted_save_folder = '../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/depth_after_fitting/exp_fit_da_non_metric_and_colmap_true_points'
 
+cameraTxt_path = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/sparse/cameras.txt'
+imagesTxt_path = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/sparse/images.txt'
+imgs_folder = "../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/images"
+depth_map_colmap_folder = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/stereo/depth_maps'
+depth_map_da_non_metric_folder = '../depth-anything-estimations/non-metric_depths/brg_rm_small_park-FullFrames'
+#depth_map_da_metric_folder = '../depth-anything-estimations/metric_depths/cavignal-fountain_pinhole_1camera'
+depth_map_from_3DPoints_folder = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/sparse/depth_maps_from_3DPoints'
+depth_map_fitted_save_folder = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/depth_after_fitting/exp_fit_da_non_metric_and_colmap_true_points'
+
 # ************************** EXTRACT INTRINSICS FROM CAMERA.TXT FILE **************************
 # Intrinsics matrix:
 # [fx, 0, cx]
@@ -584,7 +593,9 @@ with open(imagesTxt_path, 'r') as f:
                         print("Count: ", count)
 
                         single_image_info = line.split() # split every field in line
-                        images_info.append(single_image_info) # and store them as separate fields as list in a list ( [ [] ] )
+
+                        image_id = single_image_info[0]
+                        images_info[image_id] = single_image_info
 
                         # Images info contains:
                         # IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
@@ -601,7 +612,8 @@ with open(imagesTxt_path, 'r') as f:
                         extrinsics_matrix = np.vstack([np.hstack([rotation_matrix, translation.reshape(3, 1)]), 
                                                         np.array([0, 0, 0, 1])])
 
-                        cameras_extrinsics.append(extrinsics_matrix)
+                        #cameras_extrinsics.append(extrinsics_matrix)
+                        cameras_extrinsics[image_id] = extrinsics_matrix
 
                         # ----------- FIND CAMERA CENTER
                         # TRANSPOSE R (R^t)

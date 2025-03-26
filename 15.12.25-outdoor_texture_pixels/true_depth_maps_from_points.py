@@ -263,7 +263,8 @@ def main(colmap_folder):
 
 # Esegui lo script
 if __name__ == "__main__":
-    colmap_folder = "../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/" 
+    colmap_folder = "../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/sparse"
+    #colmap_folder = "../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/" 
     depth_maps = main(colmap_folder)
 
     for img_name, depth_map in depth_maps.items():
