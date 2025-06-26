@@ -5,6 +5,8 @@ import os
 import matplotlib
 matplotlib.use('TkAgg')
 import pylab as plt
+import cv2
+import pycolmap
 
 def read_array(path):
     with open(path, "rb") as fid:
@@ -65,8 +67,8 @@ def createSphericalPointCloud(source_point_cloud, radius, xc, yc, zc):
 
     # Take only the positive value of t, and substitute it back into the equation of the line to find the intersection point (X, Y, Z)
     # X = xc + a * (r / sqrt(a^2 + b^2 + c^2))
-    # Y = yc + b * (r / sqrt(a^2 + b^2 + c^2))
-    # Z = zc + c * (r / sqrt(a^2 + b^2 + c^2))
+    # Y = yc + b * (r / sqrt(a^2 + b^2 + c**2))
+    # Z = zc + c * (r / sqrt(a^2 + b**2 + c**2))
 
     # This is the final form that is written in the code below :)
     # The above steps are just for understanding   
@@ -225,9 +227,10 @@ def pick_points(pcd):
     vis.run()  # user picks points
     vis.destroy_window()    
     '''
-
+    
     # Codice dove provo io a settare gli estrinseci della camera per avvicinare la camera alla scena
     # Però ovviamente da scena a scena dovrebbe cambiare e quindi non va bene per tutte
+    
     vis = o3d.visualization.VisualizerWithEditing()
     vis.create_window()
     vis.add_geometry(pcd)
@@ -240,7 +243,7 @@ def pick_points(pcd):
     # Avvicina camera lungo asse Z
     extrinsic = np.array(camera_params.extrinsic, copy=True)
 
-    # Stampa estrinseci iniziali
+    # Stampa estrinseci 
     print("Extrinsics prima:")
     print(extrinsic[2,3])
 
@@ -262,6 +265,7 @@ def pick_points(pcd):
     vis.run()
     vis.destroy_window()
     
+
     '''
     # fix allo zoom che pare non funzionare? l'ho trovato su github ma tira un'eccezione ad una certa 
     # e cmq anche ri-fixando non sistema lo zoom
@@ -305,10 +309,29 @@ imagesTxt_path = '../colmap_reconstructions/colmap_output_simple_radial/sparse/i
 imgs_folder = "../colmap_reconstructions/colmap_output_simple_radial/dense/images"
 depth_map_folder = '../colmap_reconstructions/colmap_output_simple_radial/dense/stereo/depth_maps'
 
-cameraTxt_path = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/sparse/cameras.txt'
-imagesTxt_path = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/sparse/images.txt'
-imgs_folder = "../colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/images"
-depth_map_folder = '../colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/stereo/depth_maps'
+cameraTxt_path = '../datasets/colmap_reconstructions/cavignal-bench_pinhole_1camera/sparse/cameras.txt'
+imagesTxt_path = '../datasets/colmap_reconstructions/cavignal-bench_pinhole_1camera/sparse/images.txt'
+imgs_folder = "../datasets/colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/images"
+depth_map_folder = '../datasets/colmap_reconstructions/cavignal-bench_pinhole_1camera/dense/stereo/depth_maps'
+
+cameraTxt_path = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/sparse/cameras.txt'
+imagesTxt_path = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/sparse/images.txt'
+imgs_folder = "../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/images"
+#depth_map_folder = '../depth-anything-estimations/non-metric_depths/brg_rm_small_park-FullFrames'
+#depth_map_folder = "../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/video_depth_anything/1920x1080/frames2FPS"
+depth_map_folder = "../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/depth_after_fitting_video/exp_fit_da_non_metric_and_colmap_true_points"
+
+
+cameraTxt_path = '../datasets/colmap_reconstructions/fields/sparse/0/cameras.txt'
+imagesTxt_path = '../datasets/colmap_reconstructions/fields/sparse/0/images.txt'
+imgs_folder = "../datasets/colmap_reconstructions/fields/input"
+depth_map_folder = "../datasets/colmap_reconstructions/fields/depthAnyV2-nonMetric"
+#depth_map_folder = "../datasets/colmap_reconstructions/fields/depth_after_fitting/exp_fit_da_non_metric_and_colmap_true_points"
+#depth_map_folder = "../datasets/colmap_reconstructions/fields/depth_maps_from_3DPoints"
+depth_map_folder = "../datasets/colmap_reconstructions/fields/video-depth-anything/1080x1920/framesInterpolated"
+#depth_map_folder = "../datasets/colmap_reconstructions/fields/depth_after_fitting_video/exp_fit_da_non_metric_and_colmap_true_points"
+
+
 
 # ************************** EXTRACT INTRINSICS FROM CAMERA.TXT FILE **************************
 # Intrinsics matrix:
@@ -420,6 +443,12 @@ point_cloud = o3d.geometry.PointCloud()
 # [r3.1, r3.2, r3.3, tz]
 # [0,    0,    0,    1 ]
 
+# LINESET to draw camera directions in 3d as 'vectors'
+lineset = o3d.geometry.LineSet()
+all_points = []
+all_lines = []
+cameras_coords = []
+
 with open(imagesTxt_path, 'r') as f:
     for line in f:    
         # Ignore comments
@@ -428,7 +457,13 @@ with open(imagesTxt_path, 'r') as f:
 
             if(count > 0):
                 if count % 2 != 0: # Read every other line (skip the second line for every image)
-                    if count % 25 == 0: # salta tot righe
+                    if count % 1 == 0: # salta tot righe
+                        '''
+                        if count < 30:
+                            continue
+                        '''
+                        if count >= 10:
+                            break
                         
                         print(count)
 
@@ -443,8 +478,50 @@ with open(imagesTxt_path, 'r') as f:
                         quaternions = np.array([single_camera_info[1], single_camera_info[2], single_camera_info[3], single_camera_info[4]]) # numpy array
                         rotation_matrix = o3d.geometry.get_rotation_matrix_from_quaternion(quaternions)
 
+                        print("Rotation matrix world to cam:\n", rotation_matrix)
+                        print("rotation matrix cam to world (converted)\n", rotation_matrix.transpose())
+
                         # CREATE TRANSLATION VECTOR T
                         translation = np.array([single_camera_info[5], single_camera_info[6], single_camera_info[7]], dtype = float)
+
+                        print("\nTranslation vector world to camera:\n", translation)
+                        print("Translation vector camera to world (converted)\n", -(rotation_matrix.transpose()) @ translation.reshape(3, 1))
+
+                        print("")
+
+                        # ----------- FIND CAMERA CENTER
+                        # TRANSPOSE R (R^t)
+                        rotation_transpose = rotation_matrix.transpose()
+
+                        # MULTIPLY R_TRANSPOSED BY * (-1) (-R^t)
+                        rotation_trans_inv = (-1) * rotation_transpose
+
+                        # DOT PRODUCT (*) BETWEEN INVERTED_R_TRANSPOSED (-R^t) AND TRANSLATION VECTOR (T)
+                        # TO FIND CAMERA CENTER
+                        camera_center = np.dot(rotation_trans_inv, translation)
+                        
+                        cameras_coords.append(camera_center)
+
+                        # ------------ FIND CAMERA DIRECTION AND PREPARE TO DRAW IT AS A VECTOR IN 3D SPACE 
+
+                        # Extract camera direction vector (forward vector)
+                        # rotation_matrix = extrinsics_matrix[:3, :3]  # I already have the rot matrix, keep it commented
+                        forward_vector = -rotation_matrix[:, 2]
+                        
+                        # cerca il punto finale per fare sta linea
+                        # punto di inizio è la camera stessa
+                        # punto finale = punto inizio + direzione * lunghezza vettore
+                        final_point = camera_center + forward_vector * 1.5
+
+                        # ora traccio linea
+                        all_points.append(camera_center)
+                        all_points.append(final_point)
+
+                        # Aggiungi la linea tra gli ultimi due punti aggiunti
+                        idx = len(all_points)
+                        all_lines.append([idx - 2, idx - 1])  # Indici degli ultimi due punti
+
+
 
                         # CREATE EXTRINSICS MATRIX                
                         extrinsics_matrix = np.vstack([np.hstack([rotation_matrix, translation.reshape(3, 1)]), 
@@ -462,21 +539,41 @@ with open(imagesTxt_path, 'r') as f:
                         
                         # Take the image file name
                         img_filename = single_camera_info[9]
-
-                        # Read the depth map
-                        depth_map_filename = img_filename + '.geometric.bin' # get the filename of the depth map
-                        depth_map_path = os.path.join(depth_map_folder, depth_map_filename)
                         
-                        depth = read_array(depth_map_path)
-                        max_depth = np.max(depth)
-                        depth[depth == 0] = max_depth # points with 0 depth are set to the maximum depth value to mimic the infinity
+                        # in case of colmap maps
+                        # Read the depth map
+                        #depth_map_filename = img_filename + '.geometric.bin' # get the filename of the depth map
+                        #depth_map_path = os.path.join(depth_map_folder, depth_map_filename)
+                        #depth = read_array(depth_map_path)
+
+                        # in case of png (depth any v2 for example) maps
+                        # Read the depth map
+                        depth_map_filename = img_filename # get the filename of the depth map
+                        depth_map_path = os.path.join(depth_map_folder, depth_map_filename)
+                        depth = cv2.imread(depth_map_path, cv2.IMREAD_GRAYSCALE)
+
+                        # IN CASE OF DEPTH MAPS FROM DEPTH ANYTHING
+                        # Need to invert the map to match the colmap rerpresentation of lower vals = closer point (0: closest, 255: farthest) 
+                        depth = np.invert(depth)
+
+                        # in case of fitted maps
+                        # Read the depth map
+                        #depth_map_filename = img_filename + '_depth.npy' # get the filename of the depth map
+                        #depth_map_path = os.path.join(depth_map_folder, depth_map_filename)
+                        #depth = np.asarray(np.load(depth_map_path)).astype(np.float32) # load the depth map as a numpy array
+
+                        # not very good do not use
+                        #max_depth = np.max(depth)
+                        #depth[depth == 0] = max_depth # points with 0 depth are set to the maximum depth value to mimic the infinity
 
                         depth = o3d.geometry.Image(depth) # convert to Open3D image
 
                         # Visualizza
-                        #plt.imshow(depth)
-                        #plt.axis('off')
-                        #plt.show()
+                        '''
+                        plt.imshow(depth)
+                        plt.axis('off')
+                        plt.show()
+                        '''
 
                         # Read the image
                         img_path = os.path.join(imgs_folder, img_filename)
@@ -492,9 +589,9 @@ with open(imagesTxt_path, 'r') as f:
                         # Add to the total point cloud
                         point_cloud += current_point_cloud
 
-                        '''
+                        
                         # Plot both image and depth map
-
+                        '''
                         plt.subplot(1, 2, 1)
                         plt.title('Redwood grayscale image')
                         plt.imshow(rgbd.color)
@@ -502,11 +599,37 @@ with open(imagesTxt_path, 'r') as f:
                         plt.title('Redwood depth image')
                         plt.imshow(rgbd.depth, cmap='plasma')
                         plt.show()
-                        ''' 
+                        '''
 
 # Flip it, otherwise the point cloud will be upside down
 point_cloud.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
-point_cloud.points = o3d.utility.Vector3dVector(np.asarray(point_cloud.points) * 1000) # test, fai la pc più grande
+point_cloud.points = o3d.utility.Vector3dVector(np.asarray(point_cloud.points))
+
+# ------- SHOW CAMERAS IN 3D (RED) + FORWARD VECTOR (GREEN)
+# Dopo aver calcolato tutti i camera_center
+cameras_coords = np.array(cameras_coords)
+# Applica la stessa trasformazione
+transform_matrix = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+cameras_coords_homogeneous = np.hstack([cameras_coords, np.ones((cameras_coords.shape[0], 1))])
+cameras_coords_transformed = (transform_matrix @ cameras_coords_homogeneous.T).T[:, :3]
+
+# Create new point cloud, add camera centers
+cameras_point_cloud = o3d.geometry.PointCloud()
+cameras_point_cloud.points = o3d.utility.Vector3dVector(cameras_coords)
+
+# Paint them red
+cameras_point_cloud.paint_uniform_color([1, 0, 0])
+
+lineset.points = o3d.utility.Vector3dVector(all_points)
+lineset.lines = o3d.utility.Vector2iVector(all_lines)
+
+# Apply color to lineset
+GREEN = [0.0, 1.0, 0.0]
+lines_color = [GREEN] * len(lineset.lines)
+lineset.colors = o3d.utility.Vector3dVector(lines_color)
+
+
+o3d.visualization.draw_geometries([lineset, cameras_point_cloud, point_cloud])
 
 # **** SPHERIC PROJECTION
 
@@ -564,6 +687,7 @@ center_point_cloud.points.append(center_coord)
 #paint it magenta
 center_point_cloud.colors.append(([1, 0, 1]))
 
+# Visualize with camera centers
 o3d.visualization.draw_geometries([sphere, center_point_cloud])
 
 equiImg = createEquirectangularPointCloud(sphere, 2, center_coord[0], center_coord[1], center_coord[2], cropped_dist_from_center)

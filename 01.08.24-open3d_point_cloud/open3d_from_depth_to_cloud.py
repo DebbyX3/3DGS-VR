@@ -50,7 +50,7 @@ def read_array(path):
 camera_info = []
 
 # Load the camera intrinsics 
-with open('../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/cameras.txt', 'r') as f:
+with open('../datasets/colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/cameras.txt', 'r') as f:
     for line in f:    
         # Ignore comments
         if not line.startswith("#"):
@@ -163,7 +163,7 @@ cameras_extrinsics = []
 # Create the point cloud
 point_cloud = o3d.geometry.PointCloud()
 
-with open('../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/images.txt', 'r') as f:
+with open('../datasets/colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/images.txt', 'r') as f:
     for line in f:    
         # Ignore comments
         if not line.startswith("#"):
@@ -200,7 +200,7 @@ with open('../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/ima
                     img_filename = single_camera_info[9]
 
                     # Search the image file name in the depth map directory
-                    depth_map_folder = '../colmap_reconstructions/water_bottle_gui_pinhole_1camera/stereo/depth_maps'
+                    depth_map_folder = '../datasets/colmap_reconstructions/water_bottle_gui_pinhole_1camera/stereo/depth_maps'
                     depth_map_filename = img_filename + '.geometric.bin'
                     depth_map_path = os.path.join(depth_map_folder, depth_map_filename)
 
@@ -216,7 +216,7 @@ with open('../colmap_reconstructions/water_bottle_gui_pinhole_1camera/sparse/ima
                     # ***** COLORS
 
                     # Load the RGB image
-                    rgb_image = o3d.io.read_image("../colmap_reconstructions/water_bottle_gui_pinhole_1camera/images/" + img_filename)
+                    rgb_image = o3d.io.read_image("../datasets/colmap_reconstructions/water_bottle_gui_pinhole_1camera/images/" + img_filename)
 
                     # Extract the RGB values of every pixel
                     rgb_values = np.asarray(rgb_image).reshape(-1, 3)

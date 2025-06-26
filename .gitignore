@@ -8,8 +8,7 @@ datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/sparse/images.txt
 
 datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera
 
-Point_clouds_deb
-
-10.02.25-gaussian_dome/points3D_output
-10.02.25-gaussian_dome/ply_manipulation
+10.02.25-gaussian_dome/points3D_output-fields_dataset
+10.02.25-gaussian_dome/points3D_output-small_park_dataset
+10.02.25-gaussian_dome/ply_manipulation-small_park_dataset
 
