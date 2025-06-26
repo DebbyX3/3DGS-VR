@@ -1,6 +1,3 @@
-Here you can find the part of the dataset that are actually used. Full datasets are stored locally
-
-----
 
 To match colmap gui to GS colmap 'convert.py' script:
 
