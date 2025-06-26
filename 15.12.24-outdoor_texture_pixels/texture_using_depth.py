@@ -127,7 +127,13 @@ def scale_texture_exponential (depth_to_scale, depth_to_base_on, label_depth_to_
     # Fitting esponenziale
     # aumento il maxfev
     # ho provato a stimare meglio i par iniziali p0, ma esce sempre bleah ad un certo punto
-    popt, pcov = opt.curve_fit(exponential_func, depth_to_scale_values_clean, depth_to_base_on_values_clean, p0=(1, -0.01, 1), maxfev=50000)
+    try:
+        popt, pcov = opt.curve_fit(exponential_func, depth_to_scale_values_clean, depth_to_base_on_values_clean, p0=(1, -0.01, 1), maxfev=500000)
+    except RuntimeError as e:
+        print(f"curve_fit non ha trovato una soluzione: {e}. Uso parametri di fallback.")
+        # Fallback: fit a linear function as a backup, or just use default values
+        popt = [1.0, 0.0, 0.0]  # a reasonable fallback for a, b, c
+        pcov = np.zeros((3, 3))
     a, b, c = popt
     print(f"Parametri ottimizzati: a={a}, b={b}, c={c}")
 
@@ -156,7 +162,7 @@ def scale_texture_exponential (depth_to_scale, depth_to_base_on, label_depth_to_
     scaled_depth_map = exponential_func(depth_to_scale, *popt)
 
     # Plot dei risultati
-    #plot_fitting_results(depth_to_scale_values_clean, depth_to_base_on_values_clean, y_pred, label_depth_to_scale, label_depth_to_base_on)
+    plot_fitting_results(depth_to_scale_values_clean, depth_to_base_on_values_clean, y_pred, label_depth_to_scale, label_depth_to_base_on)
 
     return popt, scaled_depth_map
 
@@ -452,10 +458,25 @@ cameraTxt_path = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrame
 imagesTxt_path = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/sparse/images.txt'
 imgs_folder = "../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/images"
 depth_map_colmap_folder = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/stereo/depth_maps'
-depth_map_da_non_metric_folder = '../depth-anything-estimations/non-metric_depths/brg_rm_small_park-FullFrames'
+#depth_map_da_non_metric_folder = '../depth-anything-estimations/non-metric_depths/brg_rm_small_park-FullFrames'
+depth_map_da_non_metric_folder = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/video_depth_anything/1920x1080/frames2FPS'
 #depth_map_da_metric_folder = '../depth-anything-estimations/metric_depths/cavignal-fountain_pinhole_1camera'
-depth_map_from_3DPoints_folder = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/sparse/depth_maps_from_3DPoints'
-depth_map_fitted_save_folder = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/depth_after_fitting/exp_fit_da_non_metric_and_colmap_true_points'
+depth_map_from_3DPoints_folder = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/depth_maps_from_3DPoints'
+#depth_map_fitted_save_folder = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/depth_after_fitting/exp_fit_da_non_metric_and_colmap_true_points'
+depth_map_fitted_save_folder = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/depth_after_fitting_video/exp_fit_da_non_metric_and_colmap_true_points'
+
+
+cameraTxt_path = '../datasets/colmap_reconstructions/fields/sparse/0/cameras.txt'
+imagesTxt_path = '../datasets/colmap_reconstructions/fields/sparse/0/images.txt'
+imgs_folder = "../datasets/colmap_reconstructions/fields/input"
+#depth_map_colmap_folder = ''
+#depth_map_da_non_metric_folder = '../../colmap_reconstructions_complete/fields/depthAnyV2-nonMetric'
+depth_map_da_non_metric_folder = "../datasets/colmap_reconstructions/fields/video-depth-anything/1080x1920/framesInterpolated"
+#depth_map_da_metric_folder = '../depth-anything-estimations/metric_depths/cavignal-fountain_pinhole_1camera'
+depth_map_from_3DPoints_folder = '../datasets/colmap_reconstructions/fields/depth_maps_from_3DPoints'
+#depth_map_fitted_save_folder = '../datasets/colmap_reconstructions/fields/depth_after_fitting/exp_fit_da_non_metric_and_colmap_true_points'
+depth_map_fitted_save_folder = '../datasets/colmap_reconstructions/fields/depth_after_fitting_video/exp_fit_da_non_metric_and_colmap_true_points'
+
 
 # ************************** EXTRACT INTRINSICS FROM CAMERA.TXT FILE **************************
 # Intrinsics matrix:
@@ -641,6 +662,7 @@ with open(imagesTxt_path, 'r') as f:
                         # Take the image file name
                         img_filename = single_image_info[9]
 
+                        '''
                         # ---- Read colmap depth map
                         # Numpy array with relative values, where the LOWER the value, the CLOSER the pixel is to the camera
                         depth_map_colmap_filename = img_filename + '.geometric.bin' # get the filename of the depth map
@@ -653,6 +675,8 @@ with open(imagesTxt_path, 'r') as f:
                         
                         # View grayscale from 0 to 255 (test)
                         #plt.imshow(norm_depth_colmap, cmap='gray', vmin=0, vmax=255)
+                        '''
+                        
                         '''
                         plt.figure()
                         #plt.imshow(depth_colmap, cmap='gray')
@@ -743,8 +767,8 @@ with open(imagesTxt_path, 'r') as f:
                         plt.title("Fitted Depth Map")
                         plt.show()
                         '''
-                        
-                        np.save(os.path.join(depth_map_fitted_save_folder, f"{img_filename}_depth.npy"), fitted_depth_map)  # Salva ogni depth map come file NumPy
+                    
+                        #np.save(os.path.join(depth_map_fitted_save_folder, f"{img_filename}_depth.npy"), fitted_depth_map)  # Salva ogni depth map come file NumPy
 
 
 

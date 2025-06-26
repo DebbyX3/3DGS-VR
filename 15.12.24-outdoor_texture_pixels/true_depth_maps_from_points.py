@@ -241,6 +241,7 @@ def generate_depth_map(image, camera, points3D):
     return depth_map
 
 def main(colmap_folder):
+    # TODO make code work using .bin files (colmap codebase already has the functions to read them)
     cameras_info, _  = parse_cameras(os.path.join(colmap_folder, 'cameras.txt'))
     images = parse_images(os.path.join(colmap_folder, 'images.txt'))
     points3D = parse_points3D(os.path.join(colmap_folder, 'points3D.txt'))
@@ -263,8 +264,9 @@ def main(colmap_folder):
 
 # Esegui lo script
 if __name__ == "__main__":
-    colmap_folder = "../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/sparse"
+    #colmap_folder = "../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/sparse"
     #colmap_folder = "../datasets/colmap_reconstructions/cavignal-fountain_pinhole_1camera/sparse/" 
+    colmap_folder = "../../colmap_reconstructions_complete/fields/sparse/0/"
     depth_maps = main(colmap_folder)
 
     for img_name, depth_map in depth_maps.items():
