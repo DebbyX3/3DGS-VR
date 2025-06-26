@@ -1,0 +1,17 @@
+Reconstruction:
+        num_cameras = 1
+        num_images = 339
+        num_reg_images = 339
+        num_points3D = 85057
+        num_observations = 557284
+        mean_track_length = 6.55189
+        mean_observations_per_image = 1643.91
+        mean_reprojection_error = 0.992212
+Most distant point: [ 5.00476329 -0.17722941 -3.06213817]
+Distance: 5.75623710524381
+Center of scene: [0.18102564 0.02869897 0.07209446]
+num of icosphere points generated:  2621442.0
+radius of icosphere:  23.02494842097524
+finita proiezione colori
+Inizio ricerca raggio ottimo
+Optimal radius for circles: 0.0343544449924294
