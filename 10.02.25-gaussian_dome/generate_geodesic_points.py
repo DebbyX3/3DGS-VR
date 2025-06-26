@@ -136,8 +136,25 @@ def distance_3d(p1, p2):
     return np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2 + (p1[2] - p2[2])**2)
 
 
-sparse_folder = '../../gaussian-splatting-new/gaussian-splatting/data/brg_rm_small_park_test/sparse/0/'
-image_folder = '../../gaussian-splatting-new/gaussian-splatting/data/brg_rm_small_park_test/input/'
+
+
+subdivisions = 9 #9 default
+radius_mult = 4  # metti *4 o *5
+
+
+
+# -- BrgRm small park folders
+sparse_folder = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/sparse'
+image_folder = '../datasets/colmap_reconstructions/brg_rm_small_park-FullFrames/images_threshold_10/'
+
+# -- Field folders
+#sparse_folder = '../datasets/colmap_reconstructions/fields/sparse/0/'
+#image_folder = '../datasets/colmap_reconstructions/fields/input/'
+
+# -- BrgRm small park complete pipeline folders
+sparse_folder = '../datasets/colmap_reconstructions/brgRmSmParkFullFramesCompletePipeline/sparse/0'
+image_folder = '../datasets/colmap_reconstructions/brgRmSmParkFullFramesCompletePipeline/video-depth-anything-metric/fromSceneCenter/distances_threshold_30.0'
+save_ply_path = f'../datasets/colmap_reconstructions/brgRmSmParkFullFramesCompletePipeline/points3D_{subdivisions}subd_{radius_mult}radius_color.ply'
 
 reconstruction = pycolmap.Reconstruction(sparse_folder)
 print(reconstruction.summary())
@@ -150,9 +167,7 @@ all_lines = []
 # loop on all images
 camera_data = {}
 
-for image_id in range(1, reconstruction.num_images() + 1):
-    image = reconstruction.image(image_id)
-
+for image_id, image in reconstruction.images.items():
     camera_coords = image.projection_center()
     direction_vector = image.viewing_direction()
 
@@ -182,7 +197,6 @@ for camera_id, data in camera_data.items(): # camera_id = key, data = value
     print(f"Camera {camera_id} direction: {data['direction']}")
 '''
 
-
 # -------- Find center of all cameras (center of point cloud)
 
 # Create new point cloud, add camera centers
@@ -195,17 +209,18 @@ center_of_scene = cameras_point_cloud.get_center()
 most_distant_point, max_distance = find_most_distant_point(cameras_point_cloud, center_of_scene)
 print("Most distant point:", most_distant_point)
 print("Distance:", max_distance)
+print("Center of scene:", center_of_scene)
 
 
 # --------- create icosphere based on max_distance
 # radius = max_distance * 2
-ico_points_pos, ico_faces = icosphere(subdivisions = 9, 
-                            radius = max_distance * 4, # metti *4 o *5
+ico_points_pos, ico_faces = icosphere(subdivisions = subdivisions, 
+                            radius = max_distance * radius_mult,
                             center = center_of_scene, 
                             return_centroids = False) #keep false!!!!!!!!!!!
 
 print("num of icosphere points generated: ", ico_points_pos.size/3)
-print("radius of icosphere: ", max_distance * 4)
+print("radius of icosphere: ", max_distance * radius_mult)
 
 icosphere_pc = o3d.geometry.PointCloud()
 icosphere_pc.points = o3d.utility.Vector3dVector(ico_points_pos)
@@ -216,11 +231,16 @@ icosphere_pc.colors = o3d.utility.Vector3dVector(np.full((len(ico_points_pos), 3
 
 point_colors = {}
 
-for image_id in range(1, reconstruction.num_images() + 1):
-    image = reconstruction.images[image_id]
+for image_id, image in reconstruction.images.items():
+    #image = reconstruction.images[image_id]
 
     image_path = image.name
-    image_data = Image.open(image_folder + image_path)
+    try:
+        image_data = Image.open(image_folder + "/" + image_path)
+    except:
+        print("!!!! " + image_path + " not found")
+        continue
+    #print("Opened: " + image_folder + "/" + image_path)
 
     point_3D_id = 0
 
@@ -233,15 +253,20 @@ for image_id in range(1, reconstruction.num_images() + 1):
             x_pixel, y_pixel = int(round(point_2D[0])), int(round(point_2D[1]))
 
             # Verifica se il pixel è dentro i limiti dell'immagine
-            if 0 <= x_pixel < image_data.width and 0 <= y_pixel < image_data.height:
+            if 0 <= x_pixel < image_data.width and 0 <= y_pixel < image_data.height:                
                 # Estrai il colore del pixel
                 color = image_data.getpixel((x_pixel, y_pixel))
 
-                # Aggiungi l'informazione al dizionario
-                if point_3D_id not in point_colors:
-                    point_colors[point_3D_id] = []
-
-                point_colors[point_3D_id].append((color, point_2D, point_3D, point_3D_id))  # Colore, posizione 2D e 3D
+                # Check color:
+                # - if color has an alpha channel AND it is NOT transparent (= 0)
+                # OR
+                # - if the color has NOT an alpha channel
+                # Then save the color!
+                # Basically, I do NOT want to save a trasnparent color
+                if((len(color) > 3 and color[3] != 0) or len(color) <= 3): #short circuit evaluation without throwing an exceptions if color[3] does not exists
+                    if point_3D_id not in point_colors:
+                        point_colors[point_3D_id] = []
+                    point_colors[point_3D_id].append((color, point_2D, point_3D, point_3D_id))  # Colore, posizione 2D e 3D
 
         point_3D_id += 1
 
@@ -254,8 +279,11 @@ for point_3D_id, infos in point_colors.items():
     # Scegli il colore più vicino
     chosen_color = infos[closest_index][0]
 
-    # Mettilo nella point cloud
-    icosphere_pc.colors[point_3D_id] = chosen_color
+    if len(chosen_color) >= 4:  # if the color has an alpha channel
+        icosphere_pc.colors[point_3D_id] = chosen_color[:3] # remove the alpha channel and just save the rbg
+    else: # if the color has NOT an alpha channel
+        icosphere_pc.colors[point_3D_id] = chosen_color
+
 
     #print(f"Punto 3D {point_3D_id}: Colore scelto (più vicino al centro della scena): {chosen_color}")
 
@@ -265,13 +293,14 @@ print("finita proiezione colori\nInizio ricerca raggio ottimo")
 optimal_radius = calculate_circumradius(ico_points_pos, ico_faces)
 print("Optimal radius for circles:", optimal_radius)
 
-
+'''
 # --------- Create circles on the icosphere points
 circles = []
 
 for point in ico_points_pos:
     circle = create_circle(center=point, normal=point - center_of_scene, radius=optimal_radius)
     circles.append(circle)
+'''
 
 # ------- SHOW CAMERAS IN 3D (RED) + FORWARD VECTOR (GREEN)
 # Paint camera coords red
@@ -286,14 +315,16 @@ GREEN = [0.0, 1.0, 0.0]
 lines_color = [GREEN] * len(lineset.lines)
 lineset.colors = o3d.utility.Vector3dVector(lines_color)
 
-save_as_ply(ico_points_pos, icosphere_pc.colors, "points3D_9subd.ply")
+
+save_as_ply(ico_points_pos, icosphere_pc.colors, save_ply_path)
+
 
 # SE VUOI VISUALIZZARE SU OPEN3D, DIVIDI TUTTI I COLORI PER 255
 # NON LI SALVO 'DIVISI' PERCHE GS LI VUOLE COME COLMAP, CIOE RGB CLASSICI
-'''
+
 test = np.asarray(icosphere_pc.colors)/255
 icosphere_pc.colors = o3d.utility.Vector3dVector(test)
 
 #o3d.visualization.draw_geometries([lineset, cameras_point_cloud, icosphere_pc] + circles)
-#o3d.visualization.draw_geometries([lineset, cameras_point_cloud, icosphere_pc])
-'''
+o3d.visualization.draw_geometries([lineset, cameras_point_cloud, icosphere_pc])
+
