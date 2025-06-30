@@ -3,8 +3,10 @@ import numpy as np
 import struct
 from plyfile import PlyData, PlyElement
 import pycolmap
-from PIL import Image
+import PIL.Image as PILImage
+import os
 import collections
+from scipy.spatial.transform import Rotation as R
 
 #### FROM COLMAP CODEBASE ####
 
@@ -333,82 +335,6 @@ def parse_images(images_bin_path):
     return images_info
 
 
-
-
-def batch_project_points_on_image(image, camera, points_3D):
-    """
-    Proietta in batch i punti 3D su un'immagine usando i parametri COLMAP (pycolmap) senza pycolmap.project_point().
-    Restituisce:
-        - point_ids_validi (lista di indici dei punti proiettati correttamente)
-        - proiezioni 2D valide (array Nx2)
-        - colori dei punti validi (array Nx3 o Nx4)
-    """
-
-    fx, fy, cx, cy = camera.params
-    K = np.array([[fx, 0, cx],
-                  [0, fy, cy],
-                  [0,  0,  1]])
-
-    # Matrice estrinseca
-    qvec = image.rotation  # [qw, qx, qy, qz]
-    tvec = image.translation  # [tx, ty, tz]
-
-    R = qvec2rotmat(qvec)
-    t = np.asarray(tvec).reshape(3, 1)
-
-    # Punti in omogenee (Nx4)
-    N = points_3D.shape[0]
-    points_h = np.hstack((points_3D, np.ones((N, 1))))
-
-    # Proiezione
-    points_proj = (P @ points_h.T).T  # (N, 3)
-    z = points_proj[:, 2]
-    points_2D = points_proj[:, :2] / z[:, np.newaxis]  # omogenea -> euclidea
-
-    # Filtro: davanti alla camera e dentro immagine
-    valid_z = z > 0
-    x, y = points_2D[:, 0], points_2D[:, 1]
-    valid_x = (x >= 0) & (x < camera.width)
-    valid_y = (y >= 0) & (y < camera.height)
-    valid = valid_z & valid_x & valid_y
-
-    valid_ids = np.where(valid)[0]
-    valid_2D = points_2D[valid_ids]
-
-    return valid_ids, valid_2D
-
-def get_colors_from_image(image_path, pixel_coords):
-    """
-    Estrae i colori da una PIL image path in posizioni pixel_coords (Nx2).
-    Salta i punti trasparenti.
-    """
-    image = Image.open(image_path)
-    image_np = np.array(image)
-
-    has_alpha = image_np.shape[2] == 4
-    pixel_coords = np.round(pixel_coords).astype(int)
-    x = pixel_coords[:, 0]
-    y = pixel_coords[:, 1]
-
-    # Proteggi da fuori bounds
-    h, w = image_np.shape[:2]
-    in_bounds = (x >= 0) & (x < w) & (y >= 0) & (y < h)
-    x, y = x[in_bounds], y[in_bounds]
-    colors = image_np[y, x]
-
-    # Filtra trasparenti
-    if has_alpha:
-        visible_mask = colors[:, 3] > 0
-        colors = colors[visible_mask]
-        x, y = x[visible_mask], y[visible_mask]
-
-    # Posizioni finali e colori
-    positions_2D = np.stack([x, y], axis=1)
-    return positions_2D, colors
-
-
-
-
 def icosphere(subdivisions=2, radius=1.0, center=np.array([0.0, 0.0, 0.0]), return_centroids=False):
     t = (1.0 + np.sqrt(5.0)) / 2.0
     vertices = np.array([[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
@@ -501,6 +427,25 @@ def calculate_circumradius(vertices, faces):
         circumradii.append(circumradius)
     return max(circumradii)
 
+def calculate_circumradius(vertices, faces):
+    # Vectorized computation for all faces at once
+    a = vertices[faces[:, 0]]
+    b = vertices[faces[:, 1]]
+    c = vertices[faces[:, 2]]
+
+    ab = np.linalg.norm(a - b, axis=1)
+    bc = np.linalg.norm(b - c, axis=1)
+    ca = np.linalg.norm(c - a, axis=1)
+
+    s = (ab + bc + ca) / 2
+    # Heron's formula for area
+    area = np.sqrt(s * (s - ab) * (s - bc) * (s - ca))
+    # Avoid division by zero
+    area[area == 0] = 1e-12
+
+    circumradius = (ab * bc * ca) / (4 * area)
+    return np.max(circumradius)
+
 def create_circle(center, normal, radius, resolution=30):
     """
     Create a circle in 3D space using Open3D.
@@ -539,7 +484,20 @@ def create_circle(center, normal, radius, resolution=30):
 def distance_3d(p1, p2):
     return np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2 + (p1[2] - p2[2])**2)
 
-
+def project_points(points_3D, rot, trans, K):
+    """
+    Proietta in batch punti 3D (Nx3) su immagine usando rot (3x3), trans (3x1), K (3x3).
+    Ritorna Nx2 array di pixel e maschera validi (davanti alla camera).
+    """
+    pts_cam = (rot @ points_3D.T + trans).T  # Nx3
+    z = pts_cam[:, 2]
+    valid = z > 0
+    pts_cam = pts_cam[valid]
+    z = z[valid]
+    pts_norm = pts_cam / z[:, None]
+    pts_img = (K @ pts_norm.T).T  # Nx3
+    pts_2d = pts_img[:, :2]
+    return pts_2d, valid
 
 
 subdivisions = 9 #9 default
@@ -561,7 +519,7 @@ cameras_bin_path = "../datasets/colmap_reconstructions/brgRmSmParkFullFramesComp
 images_bin_path = "../datasets/colmap_reconstructions/brgRmSmParkFullFramesCompletePipeline/sparse/0/images.bin"
 images_folder = "../datasets/colmap_reconstructions/brgRmSmParkFullFramesCompletePipeline/images"
 image_folder = '../datasets/colmap_reconstructions/brgRmSmParkFullFramesCompletePipeline/video-depth-anything-metric/fromSceneCenter/distances_threshold_30.0'
-save_ply_path = f'../datasets/colmap_reconstructions/brgRmSmParkFullFramesCompletePipeline/points3D_{subdivisions}subd_{radius_mult}radius_color_test.ply'
+save_ply_path = f'../datasets/colmap_reconstructions/brgRmSmParkFullFramesCompletePipeline/points3D_{subdivisions}subd_{radius_mult}radius_color.ply'
 
 reconstruction = pycolmap.Reconstruction(sparse_folder)
 print(reconstruction.summary())
@@ -571,34 +529,58 @@ lineset = o3d.geometry.LineSet()
 all_points = []
 all_lines = []
 
+cameras_data = {}
+
 cameras_info, intrinsic_matrix = parse_cameras(cameras_bin_path)
 images_info = parse_images(images_bin_path)
 
-# loop on all images
-camera_data = {}
 
-for image_id, image in reconstruction.images.items():
-    camera_coords = image.projection_center()
-    direction_vector = image.viewing_direction()
+''' ------ GATHER INFO FOR EACH IMAGE AND FIND THE CAMERA CENTER '''
 
+for image_id, img in images_info.items():   
+    
+    # ------- CREATE ROTATION MATRIX 'R' FROM QUATERNIONS
+    # Convert quaternion from world-to-camera (colmap) to camera-to-world
+    # Please remember the convention! R_wc means "rotation from camera to world"! and NOT viceversa!
+    rot_from_c_to_w = img['rot_from_w_to_c'].transpose()  # camera-to-world: R_wc =  R_cw.T
+    images_info[image_id]['rot_from_c_to_w'] = rot_from_c_to_w # assign it to the image info array dict
+    
+    print("\n\nRotation matrix world to cam:\n", img['rot_from_w_to_c'])
+    print("rotation matrix cam to world (converted)\n", rot_from_c_to_w)
+
+    # ------- CREATE TRANSLATION ARRAY 'T' FROM TRANSLATION
+    # Convert translation from world-to-camera (colmap) to camera-to-world
+    trans_from_c_to_w = (-rot_from_c_to_w) @ img['trans_from_w_to_c'] # camera-to-world: t_wc = -R_wc @ t_cw (oppure: t_wc = -R_cw.T @ t_cw)
+    images_info[image_id]['trans_from_c_to_w'] = trans_from_c_to_w # assign it to the image info array dict
+
+    print("\nTranslation vector world to camera:\n", img['trans_from_w_to_c'])
+    print("Translation vector camera to world (converted)\n", -(rot_from_c_to_w) @ img['trans_from_w_to_c'].reshape(3, 1))
+
+    # ------- CREATE CAMERA COORDINATES + LINE DIRECTION
+
+    # Store camera data
+    cameras_data[image_id] = {
+        "center": trans_from_c_to_w, # camera centers are the same as trans_from_c_to_w: -R^t * T
+        "direction": rot_from_c_to_w
+    }
+
+    # Estrai il vettore di direzione della camera (asse z della camera nel mondo)
+    # La "direction" è la matrice di rotazione camera-to-world: la terza colonna è la direzione forward della camera nel sistema mondo
+    direction_vector = cameras_data[image_id]['direction'][:, 2]
+   
     # cerca il punto finale per fare sta linea
     # punto di inizio è la camera stessa
     # punto finale = punto inizio + direzione * lunghezza vettore
-    final_point = camera_coords + direction_vector * 1.5
+    final_point = cameras_data[image_id]['center'].flatten() + direction_vector * 1.5
 
     # ora traccio linea
-    all_points.append(camera_coords)
+    all_points.append(cameras_data[image_id]['center'].flatten()) #altrimenti si lamenta poi open3d che non sono 1d
     all_points.append(final_point)
 
     # Aggiungi la linea tra gli ultimi due punti aggiunti
     idx = len(all_points)
     all_lines.append([idx - 2, idx - 1])  # Indici degli ultimi due punti
 
-    # Store camera data
-    camera_data[image_id] = {
-        "center": camera_coords,
-        "direction": direction_vector
-    }
 
 '''
 # Accessing the values outside the loop
@@ -610,20 +592,20 @@ for camera_id, data in camera_data.items(): # camera_id = key, data = value
 # -------- Find center of all cameras (center of point cloud)
 
 # Create new point cloud, add camera centers
+cameras_centers = [data['center'].flatten() for data in cameras_data.values()]
+
 cameras_point_cloud = o3d.geometry.PointCloud()
-# extract from dict
-cameras_coords = [data['center'] for data in camera_data.values()]
-cameras_point_cloud.points = o3d.utility.Vector3dVector(cameras_coords)
+cameras_point_cloud.points = o3d.utility.Vector3dVector(cameras_centers)
+
 center_of_scene = cameras_point_cloud.get_center()
 
 most_distant_point, max_distance = find_most_distant_point(cameras_point_cloud, center_of_scene)
+
 print("Most distant point:", most_distant_point)
 print("Distance:", max_distance)
 print("Center of scene:", center_of_scene)
 
-
 # --------- create icosphere based on max_distance
-# radius = max_distance * 2
 ico_points_pos, ico_faces = icosphere(subdivisions = subdivisions, 
                             radius = max_distance * radius_mult,
                             center = center_of_scene, 
@@ -641,43 +623,75 @@ icosphere_pc.colors = o3d.utility.Vector3dVector(np.full((len(ico_points_pos), 3
 
 point_colors = {}
 
-for image_id, image in reconstruction.images.items():
-    #image = reconstruction.images[image_id]
+for image_id, img in images_info.items():
 
-    image_path = image.name
+    image_path = image_folder + "/" + img['filename']
+
     try:
-        image_data = Image.open(image_folder + "/" + image_path)
+        image_data = PILImage.open(image_path)
     except:
         print("!!!! " + image_path + " not found")
         continue
-    #print("Opened: " + image_folder + "/" + image_path)
 
-    point_3D_id = 0
+    rot = img['rot_from_w_to_c']
+    trans = img['trans_from_w_to_c']
 
-    image_path = image_folder + "/" + image.name
-    point_coords = np.asarray(icosphere_pc.points)
-    valid_ids, projected = batch_project_points_on_image(image, reconstruction.cameras[image.camera_id], point_coords)
-    pixel_2D, colors = get_colors_from_image(image_path, projected)
+    points_3D = np.asarray(icosphere_pc.points)
+    
+    # Proietta ii punti 3D nell'immagine
+    pts_2d, valid_mask = project_points(points_3D, rot, trans, intrinsic_matrix)
 
-    for i, (color, coord, pid) in enumerate(zip(colors, pixel_2D, valid_ids)):
-        if pid not in point_colors:
-            point_colors[pid] = []
-        point_colors[pid].append((tuple(color), coord, point_coords[pid], pid))
+    valid_indices = np.where(valid_mask)[0]
+    pts_2d = np.round(pts_2d).astype(int)
+
+    # Versione vettorizzata per estrarre i colori dei pixel proiettati validi
+    # 1. Filtra i punti che cadono dentro i limiti dell'immagine
+    mask_x = (pts_2d[:, 0] >= 0) & (pts_2d[:, 0] < image_data.width)
+    mask_y = (pts_2d[:, 1] >= 0) & (pts_2d[:, 1] < image_data.height)
+    mask = mask_x & mask_y
+
+    valid_indices_in_image = valid_indices[mask]
+    valid_pts_2d = pts_2d[mask]
+    valid_points_3D = points_3D[valid_indices_in_image]
+
+    # Estrai tutti i colori in una volta sola usando numpy (solo per immagini RGB/RGBA)
+    # Nota: PIL non supporta direttamente l'indicizzazione vettorizzata, quindi convertiamo in numpy array
+    image_np = np.array(image_data)
+    # Se immagine in scala di grigi, la portiamo a 3 canali
+    if image_np.ndim == 2:
+        image_np = np.stack([image_np]*3, axis=-1)
+    # Se manca il canale alpha, lo aggiungiamo per uniformità
+    if image_np.shape[2] == 3:
+        image_np = np.concatenate([image_np, 255*np.ones((*image_np.shape[:2], 1), dtype=image_np.dtype)], axis=2)
+
+    # Ottieni i colori per tutti i punti validi
+    colors = image_np[valid_pts_2d[:, 1], valid_pts_2d[:, 0]]  # attenzione: y, x
+
+    # Filtra solo i colori non trasparenti (alpha > 0)
+    non_transparent = colors[:, 3] != 0
+    for idx, color, xy, p3d in zip(valid_indices_in_image[non_transparent], colors[non_transparent], valid_pts_2d[non_transparent], valid_points_3D[non_transparent]):
+        if idx not in point_colors:
+            point_colors[idx] = []
+        point_colors[idx].append((tuple(color), tuple(xy), p3d, idx))
+
+    # Commenti:
+    # - Questo codice evita il ciclo for pixel-per-pixel e sfrutta numpy per estrarre tutti i colori in un colpo solo.
+    # - Funziona solo se l'immagine è caricata come array numpy (RGB o RGBA).
+    # - Per immagini con canale alpha, scarta i pixel trasparenti.
+    # - I colori e le coordinate vengono associati agli indici dei punti 3D proiettati.
 
 # Alla fine, scegli il colore più vicino per ciascun punto 3D
 for point_3D_id, infos in point_colors.items():
-    # Calcola la distanza dal centro della scena per ciascun colore
     distances = [distance_3d(center_of_scene, color[2]) for color in infos]
-    closest_index = np.argmin(distances)  # Trova l'indice del colore più vicino
+    closest_index = np.argmin(distances)
 
     # Scegli il colore più vicino
     chosen_color = infos[closest_index][0]
 
-    if len(chosen_color) >= 4:  # if the color has an alpha channel
+    if len(chosen_color) >= 4: # if the color has an alpha channel
         icosphere_pc.colors[point_3D_id] = chosen_color[:3] # remove the alpha channel and just save the rbg
     else: # if the color has NOT an alpha channel
         icosphere_pc.colors[point_3D_id] = chosen_color
-
 
     #print(f"Punto 3D {point_3D_id}: Colore scelto (più vicino al centro della scena): {chosen_color}")
 

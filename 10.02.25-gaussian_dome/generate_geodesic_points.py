@@ -138,7 +138,7 @@ def distance_3d(p1, p2):
 
 
 
-subdivisions = 9 #9 default
+subdivisions = 2 #9 default
 radius_mult = 4  # metti *4 o *5
 
 
