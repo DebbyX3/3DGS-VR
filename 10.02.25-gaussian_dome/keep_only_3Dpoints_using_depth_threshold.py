@@ -3,6 +3,8 @@ import os
 from collections import defaultdict
 from plyfile import PlyData, PlyElement
 import collections
+import struct
+from pathlib import Path
 
 #### FROM COLMAP CODEBASE ####
 
@@ -14,6 +16,9 @@ Camera = collections.namedtuple(
 )
 BaseImage = collections.namedtuple(
     "Image", ["id", "qvec", "tvec", "camera_id", "name", "xys", "point3D_ids"]
+)
+Point3D = collections.namedtuple(
+    "Point3D", ["id", "xyz", "rgb", "error", "image_ids", "point2D_idxs"]
 )
 
 def qvec2rotmat(qvec):
@@ -221,50 +226,95 @@ def read_array(path):
     array = array.reshape((width, height, channels), order="F")
     return np.transpose(array, (1, 0, 2)).squeeze()
 
+def read_points3D_binary(path_to_model_file):
+    """
+    see: src/colmap/scene/reconstruction.cc
+        void Reconstruction::ReadPoints3DBinary(const std::string& path)
+        void Reconstruction::WritePoints3DBinary(const std::string& path)
+    """
+    points3D = {}
+    with open(path_to_model_file, "rb") as fid:
+        num_points = read_next_bytes(fid, 8, "Q")[0]
+        for _ in range(num_points):
+            binary_point_line_properties = read_next_bytes(
+                fid, num_bytes=43, format_char_sequence="QdddBBBd"
+            )
+            point3D_id = binary_point_line_properties[0]
+            xyz = np.array(binary_point_line_properties[1:4])
+            rgb = np.array(binary_point_line_properties[4:7])
+            error = np.array(binary_point_line_properties[7])
+            track_length = read_next_bytes(
+                fid, num_bytes=8, format_char_sequence="Q"
+            )[0]
+            track_elems = read_next_bytes(
+                fid,
+                num_bytes=8 * track_length,
+                format_char_sequence="ii" * track_length,
+            )
+            image_ids = np.array(tuple(map(int, track_elems[0::2])))
+            point2D_idxs = np.array(tuple(map(int, track_elems[1::2])))
+            points3D[point3D_id] = Point3D(
+                id=point3D_id,
+                xyz=xyz,
+                rgb=rgb,
+                error=error,
+                image_ids=image_ids,
+                point2D_idxs=point2D_idxs,
+            )
+    return points3D
+
 #### END FROM COLMAP CODEBASE ####
 
 # === Parametri ===
-points3D_path = 'path/to/points3D.bin'
-images_path = 'path/to/images.bin'
-depth_dir = 'path/to/depth_maps'  # .npz files: depth_[image_id].npz
-depth_threshold = 3.0  # ad esempio
+points3D_path = '../datasets/colmap_reconstructions/brgRmSmParkFullFramesCompletePipeline/sparse/0/points3D.bin'
+images_path = '../datasets/colmap_reconstructions/brgRmSmParkFullFramesCompletePipeline/sparse/0/images.bin'
+depth_dir = '../datasets/colmap_reconstructions/brgRmSmParkFullFramesCompletePipeline/video-depth-anything-metric/fromSceneCenter/distances'
+depth_threshold = 30.0 
 
 # === Carica dati COLMAP ===
-points3D = read_points3d_binary(points3D_path)
+points3D = read_points3D_binary(points3D_path)
 images = read_images_binary(images_path)
 
-# === Mappa punto3D_id -> lista di (image_id, x, y) dove è osservato ===
-point2D_observations = defaultdict(list)
+# === Mappa: punto3D_id -> True (valido) / False (scartato)
+point_validity = {pid: True for pid in points3D.keys()}
 
+# === Per ogni immagine, carica depth map e applica maschera binaria in blocco
 for image in images.values():
-    for xy, point3D_id in zip(image.xys, image.point3D_ids):
-        if point3D_id != -1:
-            x, y = map(int, np.round(xy))
-            point2D_observations[point3D_id].append((image.image_id, x, y))
+    #image_id = image.id
+    try:
+        depth_map = np.load(os.path.join(depth_dir, Path(image.name).stem + "_distance.npz"))['distance']
+    except FileNotFoundError:
+        # Se manca la mappa di profondità, tutti i punti osservati vanno invalidati
+        for pid in image.point3D_ids:
+            if pid != -1:
+                point_validity[pid] = False
+        continue
 
-# === Filtra punti 3D: conservativo (escludi se una sola vista è fuori soglia) ===
+    # Costruisci maschera binaria valida
+    valid_mask = depth_map <= depth_threshold
+
+    # Applica la maschera a tutte le osservazioni dell'immagine
+    for (xy, point3D_id) in zip(image.xys, image.point3D_ids):
+
+        if point3D_id == -1:
+            continue
+
+        x, y = map(int, np.round(xy))
+        
+        if 0 <= y < depth_map.shape[0] and 0 <= x < depth_map.shape[1]:
+            if not valid_mask[y, x]:
+                point_validity[point3D_id] = False
+        else:
+            point_validity[point3D_id] = False  # fuori immagine    
+
+# === Costruisci lista dei punti filtrati
 valid_points = []
 
-for point3D_id, observations in point2D_observations.items():
-    keep = True
-    for image_id, x, y in observations:
-        try:
-            depth_map = np.load(os.path.join(depth_dir, f"depth_{image_id}.npz"))['arr_0']
-            if y >= depth_map.shape[0] or x >= depth_map.shape[1]:
-                keep = False
-                break
-            if depth_map[y, x] > depth_threshold:
-                keep = False
-                break
-        except FileNotFoundError:
-            keep = False
-            break
-    if keep:
-        point = points3D[point3D_id]
-        x, y, z = point.xyz
-        r, g, b = point.rgb
-        nx, ny, nz = point.normal
-        valid_points.append((x, y, z, r, g, b, nx, ny, nz))
+for pid, is_valid in point_validity.items():
+    if is_valid:
+        p = points3D[pid]
+        nx, ny, nz = np.zeros_like(p.xyz) # Normals not available in points3D, set to zero
+        valid_points.append((*p.xyz, *p.rgb, nx, ny, nz)) # * = unpacking tuple
 
 # === Salva in formato .ply ===
 vertex_dtype = np.dtype([
